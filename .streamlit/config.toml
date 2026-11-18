@@ -1,0 +1,14 @@
+[server]
+enableStaticServing = true
+maxUploadSize = 25
+
+[theme]
+base = "light"
+primaryColor = "#920C00"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F6F6F6"
+textColor = "#111111"
+
+[client]
+toolbarMode = "minimal"
+showSidebarNavigation = false
