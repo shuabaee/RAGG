@@ -2,22 +2,6 @@
 
 A Streamlit RAG chatbot that answers questions **only** from the research PDFs you upload, with a `[Filename, p. X]` citation after each claim and the exact sentence from the PDF as proof. The front end follows the "Ragg for Research" mock-up. The chatbot is in the **Ragg for Research Model** section near the bottom of the page.
 
-## Deploy on Streamlit Community Cloud
-1. Unzip this folder and upload **all of its contents** to a new GitHub repository. Keep the folder structure (`app.py`, `core/`, `static/`, `sample_papers/`, `.streamlit/`, `requirements.txt`). Note: `.streamlit` starts with a dot, so make sure it gets uploaded.
-2. Go to share.streamlit.io → **Create app** → pick the repo → main file: `app.py` → **Deploy**.
-3. Optional but recommended: open the app's **Settings → Secrets** and paste:
-   ```toml
-   GEMINI_API_KEY = "your-key"
-   ```
-   You can get a free key at aistudio.google.com/apikey. See `.streamlit/secrets.toml.example` for OpenAI or Groq.
-
-With no key, RAGG still works in **extractive mode**: it shows the most relevant verbatim passages with page numbers, but it does not write prose answers.
-
-## Run locally
-```bash
-pip install -r requirements.txt
-streamlit run app.py
-```
 
 ## What RAGG does (scope)
 | Ask for | What you get |
@@ -43,19 +27,6 @@ Upload PDFs → text extracted page by page (PyMuPDF, falls back to pypdf) → s
 
 **Knowledge Spaces:** create notebooks, move papers between them, and click paper cards to select or deselect them. Only selected papers in the active notebook are searched.
 
-## Files
-```
-app.py                 Streamlit page: landing sections, library panel, chat
-core/pdf_utils.py      PDF text + metadata extraction, page rendering
-core/retrieval.py      chunking, section detection, BM25, hybrid search
-core/router.py         intent detection, vague/out-of-scope handling, follow-ups
-core/engine.py         retrieval -> generation -> citation + quote verification
-core/llm.py            Gemini / OpenAI-compatible chat + embeddings (plain HTTPS)
-core/prompts.py        system prompt from the proposal + task templates
-core/ui.py             mock-up HTML/CSS
-static/                mock-up images
-sample_papers/         two FICTIONAL demo PDFs ("Try Interactive Demo")
-```
 
 ## Limits (v1)
 - No OCR, so scanned or image-only PDFs are flagged and not read.
