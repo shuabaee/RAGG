@@ -405,5 +405,8 @@ def answer(
     history: list[dict],
     focus_ids: list[str],
     cfg: llm_mod.LLMConfig,
+    embed_cfg: llm_mod.EmbedConfig | None = None,
 ) -> Reply:
-    return _default_pipeline.answer(question, scope_papers, indexes, history, focus_ids, cfg)
+    return _default_pipeline.answer(
+        question, scope_papers, indexes, history, focus_ids, cfg, embed_cfg
+    )

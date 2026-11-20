@@ -302,7 +302,7 @@ def run_question(q: str):
     history = [{"role": x["role"], "content": x.get("plain") or x["content"]} for x in S.messages]
     S.messages.append({"role": "user", "content": q, "plain": q})
     try:
-        rep = engine.answer(q, papers, S.indexes, history, S.focus_ids, S.llm)
+        rep = engine.answer(q, papers, S.indexes, history, S.focus_ids, S.llm, S.embed)
     except Exception as e:  # never crash the page
         traceback.print_exc()
         rep = engine.Reply(
