@@ -1,10 +1,10 @@
 """Language-model + embedding providers (plain HTTPS, no heavy SDKs).
 
 Supported:
-  - "ollama" / "llama": local Ollama server (e.g. http://localhost:11434)
-  - "gemini"          : Google Gemini API (free tier available at aistudio.google.com)
-  - "openai"          : any OpenAI-compatible API (OpenAI, Groq, OpenRouter, ...) via base_url
-  - "none"            : no model -> RAGG runs in extractive mode (retrieval + verbatim excerpts only)
+- "ollama" / "llama": local Ollama server (e.g. http://localhost:11434)
+- "gemini"          : Google Gemini API (free tier available at aistudio.google.com)
+- "openai"          : any OpenAI-compatible API (OpenAI, Groq, OpenRouter, ...) via base_url
+- "none"            : no model -> RAGG runs in extractive mode (retrieval + verbatim excerpts only)
 """
 from __future__ import annotations
 
@@ -26,7 +26,6 @@ class LLMConfig:
     api_key: str = ""
     model: str = ""
     base_url: str = ""
-    embed_model: str = ""
 
     @property
     def enabled(self) -> bool:
@@ -46,43 +45,55 @@ class LLMConfig:
     def resolved_model(self) -> str:
         if self.model:
             return self.model
-        if self.provider in ("ollama", "llama"):
-            try:
-                base = self.resolved_base_url()
-                r = requests.get(f"{base}/api/tags", timeout=1.0)
-                if r.status_code == 200:
-                    models = [m.get("name") for m in r.json().get("models", []) if m.get("name")]
-                    if models:
-                        return models[0]
-            except Exception:
-                pass
-            return "qwen3.5:4b"
-        return {"gemini": "gemini-2.5-flash", "openai": "gpt-4o-mini"}.get(self.provider, "")
-
-    def resolved_embed(self) -> str:
-        if self.embed_model:
-            return self.embed_model
-        if self.provider == "gemini":
-            return "gemini-embedding-001"
-        if self.provider in ("ollama", "llama"):
-            try:
-                base = self.resolved_base_url()
-                r = requests.get(f"{base}/api/tags", timeout=1.0)
-                if r.status_code == 200:
-                    names = [m.get("name", "") for m in r.json().get("models", [])]
-                    for emb in ("nomic-embed-text", "all-minilm", "bge-m3", "mxbai-embed-large"):
-                        if any(emb in n for n in names):
-                            return emb
-            except Exception:
-                pass
-            return ""  # If no embedding model installed, falls back cleanly to BM25 search without 404 warning
-        if self.provider == "openai" and "api.openai.com" in (self.base_url or "https://api.openai.com/v1"):
-            return "text-embedding-3-small"
-        return ""
+        return {"gemini": "gemini-2.5-flash", "openai": "gpt-4o-mini", "ollama":"llama3.2:1b"}.get(self.provider, "")
 
     def label(self) -> str:
         if not self.enabled:
             return "Extractive mode (no AI model)"
+        prov_name = "Ollama" if self.provider in ("ollama", "llama") else self.provider.title()
+        return f"{prov_name} · {self.resolved_model()}"
+
+
+@dataclass
+class EmbedConfig:
+    provider: str = "none"  # ollama | llama | gemini | openai | none
+    api_key: str = ""
+    model: str = ""
+    base_url: str = ""
+
+    @property
+    def enabled(self) -> bool:
+        if self.provider in ("ollama", "llama"):
+            True
+        return self.provider in ("gemini", "openai") and bool(self.api_key)
+
+    def resolved_base_url(self) -> str:
+        if self.base_url:
+            return self.base_url.rstrip("/")
+        if self.provider in ("ollama", "llama"):
+            return "http://localhost:11434"
+        if self.provider == "openai":
+            return "https://api.openai.com/v1"
+        return ""
+
+    def resolved_model(self) -> str:
+        if self.model:
+            return self.model
+        return {
+            "gemini": "gemini-embedding-001",
+            "openai": "text-embedding-3-small",
+            "ollama": "nomic-embed-text",
+        }.get(self.provider, "")
+
+    def label(self) -> str:
+        if not self.enabled or not self.resolved_model():
+            return "BM25 only (no embedding model)"
+        prov_name = "Ollama" if self.provider in ("ollama", "llama") else self.provider.title()
+        return f"{prov_name} · {self.resolved_model()}"
+
+    def label(self) -> str:
+        if not self.enabled or not self.resolved_model():
+            return "BM25 only (no embedding model)"
         prov_name = "Ollama" if self.provider in ("ollama", "llama") else self.provider.title()
         return f"{prov_name} · {self.resolved_model()}"
 
@@ -110,7 +121,7 @@ def chat(cfg: LLMConfig, system: str, history: list[dict], user: str, temperatur
             "think": False,
             "options": {"temperature": temperature, "num_predict": max_tokens, "num_ctx": 8192},
         }
-        r = requests.post(f"{base}/api/chat", json=body, timeout=TIMEOUT)
+        r = requests.post(f"{base}/api/chat", json=body, timeout=TIMEOUT*2)
         if r.status_code != 200:
             _raise(r, "Ollama")
         data = r.json()
@@ -160,9 +171,9 @@ def chat(cfg: LLMConfig, system: str, history: list[dict], user: str, temperatur
     raise LLMError("No language model configured.")
 
 
-def embed(cfg: LLMConfig, texts: list[str], is_query: bool = False) -> np.ndarray | None:
+def embed(cfg: EmbedConfig, texts: list[str], is_query: bool = False) -> np.ndarray | None:
     """Return L2-normalised embeddings, or None if the provider has no embedding model."""
-    model = cfg.resolved_embed()
+    model = cfg.resolved_model()
     if not cfg.enabled or not model or not texts:
         return None
     vecs: list[list[float]] = []
