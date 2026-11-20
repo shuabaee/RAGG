@@ -1,10 +1,10 @@
 """Language-model + embedding providers (plain HTTPS, no heavy SDKs).
 
 Supported:
-- "gemini"  : Google Gemini API (free tier available at aistudio.google.com)
-- "openai"  : any OpenAI-compatible API (OpenAI, Groq, OpenRouter, ...) via base_url
-- "llama"   : local Ollama server (default http://localhost:11434)
-- "none"    : no model -> RAGG runs in extractive mode (retrieval + verbatim excerpts only)
+  - "ollama" / "llama": local Ollama server (e.g. http://localhost:11434)
+  - "gemini"          : Google Gemini API (free tier available at aistudio.google.com)
+  - "openai"          : any OpenAI-compatible API (OpenAI, Groq, OpenRouter, ...) via base_url
+  - "none"            : no model -> RAGG runs in extractive mode (retrieval + verbatim excerpts only)
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ class LLMError(Exception):
 
 @dataclass
 class LLMConfig:
-    provider: str = "none"  # gemini | openai | llama | none
+    provider: str = "none"  # ollama | llama | gemini | openai | none
     api_key: str = ""
     model: str = ""
     base_url: str = ""
@@ -30,30 +30,61 @@ class LLMConfig:
 
     @property
     def enabled(self) -> bool:
-        if self.provider == "llama":
+        if self.provider in ("ollama", "llama"):
             return True
         return self.provider in ("gemini", "openai") and bool(self.api_key)
+
+    def resolved_base_url(self) -> str:
+        if self.base_url:
+            return self.base_url.rstrip("/")
+        if self.provider in ("ollama", "llama"):
+            return "http://localhost:11434"
+        if self.provider == "openai":
+            return "https://api.openai.com/v1"
+        return ""
 
     def resolved_model(self) -> str:
         if self.model:
             return self.model
-        return {"gemini": "gemini-2.5-flash", "openai": "gpt-4o-mini", "llama": "llama3.2:1b"}.get(self.provider, "")
+        if self.provider in ("ollama", "llama"):
+            try:
+                base = self.resolved_base_url()
+                r = requests.get(f"{base}/api/tags", timeout=1.0)
+                if r.status_code == 200:
+                    models = [m.get("name") for m in r.json().get("models", []) if m.get("name")]
+                    if models:
+                        return models[0]
+            except Exception:
+                pass
+            return "qwen3.5:4b"
+        return {"gemini": "gemini-2.5-flash", "openai": "gpt-4o-mini"}.get(self.provider, "")
 
     def resolved_embed(self) -> str:
         if self.embed_model:
             return self.embed_model
         if self.provider == "gemini":
             return "gemini-embedding-001"
-        if self.provider == "llama":
-            return "nomic-embed-text"
+        if self.provider in ("ollama", "llama"):
+            try:
+                base = self.resolved_base_url()
+                r = requests.get(f"{base}/api/tags", timeout=1.0)
+                if r.status_code == 200:
+                    names = [m.get("name", "") for m in r.json().get("models", [])]
+                    for emb in ("nomic-embed-text", "all-minilm", "bge-m3", "mxbai-embed-large"):
+                        if any(emb in n for n in names):
+                            return emb
+            except Exception:
+                pass
+            return ""  # If no embedding model installed, falls back cleanly to BM25 search without 404 warning
         if self.provider == "openai" and "api.openai.com" in (self.base_url or "https://api.openai.com/v1"):
             return "text-embedding-3-small"
-        return ""  # e.g. Groq has no embedding endpoint -> keyword search only
+        return ""
 
     def label(self) -> str:
         if not self.enabled:
             return "Extractive mode (no AI model)"
-        return f"{self.provider.title()} · {self.resolved_model()}"
+        prov_name = "Ollama" if self.provider in ("ollama", "llama") else self.provider.title()
+        return f"{prov_name} · {self.resolved_model()}"
 
 
 def _raise(resp: requests.Response, who: str):
@@ -67,6 +98,28 @@ def _raise(resp: requests.Response, who: str):
 
 def chat(cfg: LLMConfig, system: str, history: list[dict], user: str, temperature: float = 0.2, max_tokens: int = 2048) -> str:
     """history: list of {"role": "user"|"assistant", "content": str}"""
+    if cfg.provider in ("ollama", "llama"):
+        base = cfg.resolved_base_url()
+        msgs = ([{"role": "system", "content": system}] if system else []) + [
+            {"role": m["role"], "content": m["content"]} for m in history
+        ] + [{"role": "user", "content": user}]
+        body = {
+            "model": cfg.resolved_model(),
+            "messages": msgs,
+            "stream": False,
+            "think": False,
+            "options": {"temperature": temperature, "num_predict": max_tokens, "num_ctx": 8192},
+        }
+        r = requests.post(f"{base}/api/chat", json=body, timeout=TIMEOUT)
+        if r.status_code != 200:
+            _raise(r, "Ollama")
+        data = r.json()
+        msg = data.get("message") or {}
+        content = (msg.get("content") or "").strip()
+        if not content:
+            content = (msg.get("thinking") or "").strip()
+        return content
+
     if cfg.provider == "gemini":
         contents = []
         for m in history:
@@ -88,25 +141,6 @@ def chat(cfg: LLMConfig, system: str, history: list[dict], user: str, temperatur
             raise LLMError(f"Gemini returned no answer ({reason}).")
         parts = (cands[0].get("content") or {}).get("parts") or []
         return "".join(p.get("text", "") for p in parts).strip()
-
-    if cfg.provider == "llama":
-        base = (cfg.base_url or "http://localhost:11434").rstrip("/")
-        msgs = ([{"role": "system", "content": system}] if system else []) + [
-            {"role": m["role"], "content": m["content"]} for m in history
-        ] + [{"role": "user", "content": user}]
-        r = requests.post(
-            f"{base}/api/chat",
-            json={
-                "model": cfg.resolved_model(),
-                "messages": msgs,
-                "stream": False,
-                "options": {"temperature": temperature, "num_predict": max_tokens},
-            },
-            timeout=TIMEOUT,
-        )
-        if r.status_code != 200:
-            _raise(r, "Llama")
-        return ((r.json().get("message") or {}).get("content") or "").strip()
 
     if cfg.provider == "openai":
         base = (cfg.base_url or "https://api.openai.com/v1").rstrip("/")
@@ -147,18 +181,18 @@ def embed(cfg: LLMConfig, texts: list[str], is_query: bool = False) -> np.ndarra
             if r.status_code != 200:
                 _raise(r, "Gemini embeddings")
             vecs.extend(e["values"] for e in r.json()["embeddings"])
-    elif cfg.provider == "llama":
-        base = (cfg.base_url or "http://localhost:11434").rstrip("/")
-        for i in range(0, len(texts), 90):
-            batch = [t[:8000] for t in texts[i : i + 90]]
+    elif cfg.provider in ("ollama", "llama"):
+        base = cfg.resolved_base_url()
+        for i in range(0, len(texts), 64):
+            batch = [t[:4000] for t in texts[i : i + 64]]
             r = requests.post(
                 f"{base}/api/embed",
                 json={"model": model, "input": batch},
                 timeout=TIMEOUT,
             )
             if r.status_code != 200:
-                _raise(r, "Llama embeddings")
-            vecs.extend(r.json()["embeddings"])
+                _raise(r, "Ollama embeddings")
+            vecs.extend(r.json().get("embeddings", []))
     else:
         base = (cfg.base_url or "https://api.openai.com/v1").rstrip("/")
         for i in range(0, len(texts), 256):

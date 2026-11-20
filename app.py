@@ -49,13 +49,23 @@ def init_state():
     s.setdefault("page_cache", {})
     if "llm" not in s:
         gem, oai = _secret("GEMINI_API_KEY"), _secret("OPENAI_API_KEY")
-        provider = _secret("RAGG_PROVIDER", "gemini" if gem else ("openai" if oai else "none")).lower()
+        prov_env = _secret("RAGG_PROVIDER").lower()
+        if prov_env:
+            provider = prov_env
+        elif gem:
+            provider = "gemini"
+        elif oai:
+            provider = "openai"
+        elif _secret("OLLAMA_HOST"):
+            provider = "ollama"
+        else:
+            provider = "none"
         key = gem if provider == "gemini" else oai if provider == "openai" else ""
         s.llm = LLMConfig(
             provider=provider,
             api_key=key,
             model=_secret("RAGG_MODEL"),
-            base_url=_secret("OPENAI_BASE_URL"),
+            base_url=_secret("OLLAMA_HOST") if provider in ("ollama", "llama") else _secret("OPENAI_BASE_URL"),
             embed_model=_secret("RAGG_EMBED_MODEL"),
         )
 
@@ -298,16 +308,45 @@ def model_settings():
     cfg: LLMConfig = S.llm
     with st.popover("⚙ Model settings"):
         st.caption("Keys entered here stay in this browser session only. For a deployed app, put the key in Streamlit **Secrets**.")
-        opts = {"Google Gemini (free tier)": "gemini", "OpenAI-compatible (OpenAI, Groq, OpenRouter…)": "openai", "None — extractive mode": "none", "Llama3 - local llm (no api key needed)": "llama"}
-        cur = next((k for k, v in opts.items() if v == cfg.provider), "None — extractive mode")
+        opts = {
+            "Ollama (local)": "ollama",
+            "Google Gemini (free tier)": "gemini",
+            "OpenAI-compatible (OpenAI, Groq, OpenRouter…)": "openai",
+            "None — extractive mode": "none",
+        }
+        cur = next((k for k, v in opts.items() if v in (cfg.provider, "ollama" if cfg.provider == "llama" else "")), "None — extractive mode")
         choice = st.selectbox("Provider", list(opts), index=list(opts).index(cur), key="set_provider")
         prov = opts[choice]
-        key = st.text_input("API key", value=cfg.api_key if prov == cfg.provider else "", type="password", key="set_key")
-        model = st.text_input("Chat model (blank = default)", value=cfg.model if prov == cfg.provider else "", key="set_model",
-                              placeholder="gemini-2.5-flash" if prov == "gemini" else "gpt-4o-mini" if prov == "openai" else "llama3.2:1b")
-        base = ""
-        if prov == "openai":
-            base = st.text_input("Base URL (blank = OpenAI)", value=cfg.base_url, key="set_base", placeholder="https://api.groq.com/openai/v1")
+        if prov == "ollama":
+            base = st.text_input("Ollama Host URL", value=cfg.base_url or "http://localhost:11434", key="set_base_ollama")
+            installed = []
+            try:
+                import requests
+                r = requests.get(f"{base.rstrip('/')}/api/tags", timeout=1.5)
+                if r.status_code == 200:
+                    installed = [m.get("name") for m in r.json().get("models", []) if m.get("name")]
+            except Exception:
+                pass
+            cur_m = cfg.model if prov in (cfg.provider, "llama") and cfg.model else (installed[0] if installed else "qwen3.5:4b")
+            if installed:
+                idx = installed.index(cur_m) if cur_m in installed else 0
+                model = st.selectbox("Model", installed, index=idx, key="set_model_ollama")
+            else:
+                model = st.text_input("Model name", value=cur_m, key="set_model_ollama", placeholder="qwen3.5:4b")
+            key = ""
+        elif prov == "gemini":
+            key = st.text_input("API key", value=cfg.api_key if prov == cfg.provider else "", type="password", key="set_key")
+            model = st.text_input("Chat model (blank = default)", value=cfg.model if prov == cfg.provider else "", key="set_model",
+                                  placeholder="gemini-2.5-flash")
+            base = ""
+        elif prov == "openai":
+            key = st.text_input("API key", value=cfg.api_key if prov == cfg.provider else "", type="password", key="set_key")
+            model = st.text_input("Chat model (blank = default)", value=cfg.model if prov == cfg.provider else "", key="set_model",
+                                  placeholder="gpt-4o-mini")
+            base = st.text_input("Base URL (blank = OpenAI)", value=cfg.base_url if prov == cfg.provider else "", key="set_base", placeholder="https://api.groq.com/openai/v1")
+        else:
+            key, model, base = "", "", ""
+
         if st.button("Save settings", key="set_save", type="primary"):
             S.llm = LLMConfig(provider=prov, api_key=key.strip(), model=model.strip(), base_url=base.strip(), embed_model=cfg.embed_model)
             for ix in S.indexes.values():  # embeddings must be rebuilt for a new provider

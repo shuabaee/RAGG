@@ -11,13 +11,13 @@ import unicodedata
 from dataclasses import dataclass, field
 from datetime import date
 
-import fitz
+import pymupdf
 
 
 _LIGATURES = {
     "ﬀ": "ff", "ﬁ": "fi", "ﬂ": "fl", "ﬃ": "ffi", "ﬄ": "ffl",
     "‘": "'", "’": "'", "“": '"', "”": '"', "­": "",
-    "–": "-", "—": "-", "−": "-", " ": " ", " ": " ",
+    "–": "-", "—": "-", "−": "-", "\u00a0": " ", "\u2009": " ",
 }
 
 
@@ -83,7 +83,7 @@ def paper_id_for(filename: str, data: bytes) -> str:
 
 
 def _pages_fitz(data: bytes) -> tuple[list[str], dict, list[tuple[float, str]]]:
-    doc = fitz.open(stream=data, filetype="pdf")
+    doc = pymupdf.open(stream=data, filetype="pdf")
     try:
         pages = [normalize_text(p.get_text("text")) for p in doc]
         meta = doc.metadata or {}
@@ -187,7 +187,7 @@ def load_pdf(filename: str, data: bytes, notebook: str = "General") -> Paper:
 def render_page_png(data: bytes, page_number: int, highlight: str | None = None, dpi: int = 110) -> bytes | None:
     """Render one page as PNG, highlighting the quote if it can be found. PyMuPDF only."""
     try:
-        doc = fitz.open(stream=data, filetype="pdf")
+        doc = pymupdf.open(stream=data, filetype="pdf")
         try:
             page = doc[page_number - 1]
             if highlight:
