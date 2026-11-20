@@ -10,9 +10,9 @@ from dataclasses import asdict
 from pathlib import Path
 
 import streamlit as st
-
+import traceback
 from core import engine
-from core.llm import LLMConfig
+from core.llm import LLMConfig, EmbedConfig
 from core.pdf_utils import load_pdf, render_page_png
 from core.ui import CSS, landing_bottom, landing_top
 
@@ -66,7 +66,26 @@ def init_state():
             api_key=key,
             model=_secret("RAGG_MODEL"),
             base_url=_secret("OLLAMA_HOST") if provider in ("ollama", "llama") else _secret("OPENAI_BASE_URL"),
-            embed_model=_secret("RAGG_EMBED_MODEL"),
+        )
+    if "embed" not in s:
+        gem, oai = _secret("GEMINI_API_KEY"), _secret("OPENAI_API_KEY")
+        emb_prov_env = _secret("RAGG_EMBED_PROVIDER").lower()
+        if emb_prov_env:
+            emb_provider = emb_prov_env
+        elif gem:
+            emb_provider = "gemini"
+        elif oai:
+            emb_provider = "openai"
+        elif _secret("OLLAMA_HOST"):
+            emb_provider = "ollama"
+        else:
+            emb_provider = "none"
+        emb_key = gem if emb_provider == "gemini" else oai if emb_provider == "openai" else ""
+        s.embed = EmbedConfig(
+            provider=emb_provider,
+            api_key=emb_key,
+            model=_secret("RAGG_EMBED_MODEL"),
+            base_url=_secret("OLLAMA_HOST") if emb_provider in ("ollama", "llama") else _secret("OPENAI_BASE_URL"),
         )
 
 
@@ -285,6 +304,7 @@ def run_question(q: str):
     try:
         rep = engine.answer(q, papers, S.indexes, history, S.focus_ids, S.llm)
     except Exception as e:  # never crash the page
+        traceback.print_exc()
         rep = engine.Reply(
             content=f"Something went wrong while answering ({type(e).__name__}). Please try again or rephrase.",
             plain="Error.", mode="refuse",
@@ -306,8 +326,11 @@ def run_question(q: str):
 
 def model_settings():
     cfg: LLMConfig = S.llm
+    emb_cfg: EmbedConfig = getattr(S, "embed", None) or EmbedConfig()
     with st.popover("⚙ Model settings"):
         st.caption("Keys entered here stay in this browser session only. For a deployed app, put the key in Streamlit **Secrets**.")
+
+        st.markdown("**Chat / LLM**")
         opts = {
             "Ollama (local)": "ollama",
             "Google Gemini (free tier)": "gemini",
@@ -315,24 +338,12 @@ def model_settings():
             "None — extractive mode": "none",
         }
         cur = next((k for k, v in opts.items() if v in (cfg.provider, "ollama" if cfg.provider == "llama" else "")), "None — extractive mode")
-        choice = st.selectbox("Provider", list(opts), index=list(opts).index(cur), key="set_provider")
+        choice = st.selectbox("Chat provider", list(opts), index=list(opts).index(cur), key="set_provider")
         prov = opts[choice]
         if prov == "ollama":
             base = st.text_input("Ollama Host URL", value=cfg.base_url or "http://localhost:11434", key="set_base_ollama")
-            installed = []
-            try:
-                import requests
-                r = requests.get(f"{base.rstrip('/')}/api/tags", timeout=1.5)
-                if r.status_code == 200:
-                    installed = [m.get("name") for m in r.json().get("models", []) if m.get("name")]
-            except Exception:
-                pass
-            cur_m = cfg.model if prov in (cfg.provider, "llama") and cfg.model else (installed[0] if installed else "qwen3.5:4b")
-            if installed:
-                idx = installed.index(cur_m) if cur_m in installed else 0
-                model = st.selectbox("Model", installed, index=idx, key="set_model_ollama")
-            else:
-                model = st.text_input("Model name", value=cur_m, key="set_model_ollama", placeholder="qwen3.5:4b")
+            model = st.text_input("Chat model (blank = default)", value=cfg.model if prov in (cfg.provider, "llama") else "", key="set_model_ollama",
+                                  placeholder="llama3.2:1b")
             key = ""
         elif prov == "gemini":
             key = st.text_input("API key", value=cfg.api_key if prov == cfg.provider else "", type="password", key="set_key")
@@ -347,10 +358,61 @@ def model_settings():
         else:
             key, model, base = "", "", ""
 
+        st.divider()
+        st.markdown("**Embeddings**")
+        emb_opts = {
+            "Same as chat provider": "same",
+            "Ollama (local)": "ollama",
+            "Google Gemini (free tier)": "gemini",
+            "OpenAI-compatible (OpenAI, Groq, OpenRouter…)": "openai",
+            "None — BM25 only": "none",
+        }
+        if emb_cfg.provider == cfg.provider and emb_cfg.api_key == cfg.api_key and emb_cfg.base_url == cfg.base_url and emb_cfg.provider != "none":
+            emb_cur = "Same as chat provider"
+        else:
+            emb_cur = next((k for k, v in emb_opts.items() if v in (emb_cfg.provider, "ollama" if emb_cfg.provider == "llama" else "")), "None — BM25 only")
+        emb_choice = st.selectbox("Embedding provider", list(emb_opts), index=list(emb_opts).index(emb_cur), key="set_emb_provider")
+        emb_prov = emb_opts[emb_choice]
+
+        if emb_prov == "same":
+            emb_key, emb_model, emb_base = key, emb_cfg.model, base
+            eff_emb_prov = prov
+        elif emb_prov == "ollama":
+            eff_emb_prov = "ollama"
+            emb_base = st.text_input("Embedding Ollama Host URL", value=emb_cfg.base_url or "http://localhost:11434", key="set_emb_base_ollama")
+            emb_model = st.text_input("Embedding model (blank = default)", value=emb_cfg.model if emb_prov in (emb_cfg.provider, "llama") else "", key="set_emb_model_ollama",
+                                      placeholder="nomic-embed-text")
+            emb_key = ""
+        elif emb_prov == "gemini":
+            eff_emb_prov = "gemini"
+            emb_key = st.text_input("Embedding API key", value=emb_cfg.api_key if emb_prov == emb_cfg.provider else "", type="password", key="set_emb_key")
+            emb_model = st.text_input("Embedding model (blank = default)", value=emb_cfg.model if emb_prov == emb_cfg.provider else "", key="set_emb_model",
+                                      placeholder="gemini-embedding-001")
+            emb_base = ""
+        elif emb_prov == "openai":
+            eff_emb_prov = "openai"
+            emb_key = st.text_input("Embedding API key", value=emb_cfg.api_key if emb_prov == emb_cfg.provider else "", type="password", key="set_emb_key")
+            emb_model = st.text_input("Embedding model (blank = default)", value=emb_cfg.model if emb_prov == emb_cfg.provider else "", key="set_emb_model",
+                                      placeholder="text-embedding-3-small")
+            emb_base = st.text_input("Embedding Base URL (blank = OpenAI)", value=emb_cfg.base_url if emb_prov == emb_cfg.provider else "", key="set_emb_base", placeholder="https://api.openai.com/v1")
+        else:
+            eff_emb_prov = "none"
+            emb_key, emb_model, emb_base = "", "", ""
+
         if st.button("Save settings", key="set_save", type="primary"):
-            S.llm = LLMConfig(provider=prov, api_key=key.strip(), model=model.strip(), base_url=base.strip(), embed_model=cfg.embed_model)
-            for ix in S.indexes.values():  # embeddings must be rebuilt for a new provider
-                ix.emb, ix.emb_key = None, ""
+            new_llm = LLMConfig(provider=prov, api_key=key.strip(), model=model.strip(), base_url=base.strip())
+            new_emb = EmbedConfig(
+                provider=eff_emb_prov,
+                api_key=emb_key.strip(),
+                model=emb_model.strip(),
+                base_url=emb_base.strip(),
+            )
+            emb_changed = (new_emb != emb_cfg)
+            S.llm = new_llm
+            S.embed = new_emb
+            if emb_changed:
+                for ix in S.indexes.values():  # embeddings must be rebuilt for a new embedding config
+                    ix.emb, ix.emb_key = None, ""
             st.rerun()
 
 

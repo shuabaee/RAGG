@@ -41,13 +41,13 @@ class RAGPipeline:
 
     def ensure_embeddings(
         self,
-        cfg: llm_mod.LLMConfig,
+        cfg: llm_mod.EmbedConfig,
         indexes: dict[str, PaperIndex],
         ids: list[str],
     ) -> str | None:
         """Embed chunks for the given papers if the provider supports it. Returns a warning or None."""
-        key = f"{cfg.provider}:{cfg.resolved_embed()}"
-        if not cfg.enabled or not cfg.resolved_embed():
+        key = f"{cfg.provider}:{cfg.resolved_model()}"
+        if not cfg.enabled or not cfg.resolved_model():
             return None
         for pid in ids:
             ix = indexes.get(pid)
@@ -68,11 +68,16 @@ class RAGPipeline:
         history: list[dict],
         focus_ids: list[str],
         cfg: llm_mod.LLMConfig | None = None,
+        embed_cfg: llm_mod.EmbedConfig | None = None,
     ) -> Reply:
         """Main RAGG answer pipeline: route -> retrieve -> sufficiency check -> generate (or extract) -> verify."""
         active_cfg = cfg or self.cfg
         if active_cfg is None:
             active_cfg = llm_mod.LLMConfig()
+
+        active_embed_cfg = embed_cfg or getattr(self, "embed_cfg", None)
+        if active_embed_cfg is None:
+            active_embed_cfg = llm_mod.EmbedConfig()
 
         papers_by_id = {p.paper_id: p for p in scope_papers}
         r: Route = route(question, scope_papers, history, [f for f in focus_ids if f in papers_by_id])
@@ -122,14 +127,14 @@ class RAGPipeline:
                 )
                 return Reply(body, re.sub(r"\*\*", "", body), mode="scope")
 
-        notice = self.ensure_embeddings(active_cfg, indexes, [p.paper_id for p in target_papers]) or ""
+        notice = self.ensure_embeddings(active_embed_cfg, indexes, [p.paper_id for p in target_papers]) or ""
         q_search = r.search_query + " " + INTENT_QUERY.get(intent, "")
 
         def _qvec():
-            if not active_cfg.enabled or not active_cfg.resolved_embed():
+            if not active_embed_cfg.enabled or not active_embed_cfg.resolved_model():
                 return None
             try:
-                v = llm_mod.embed(active_cfg, [r.search_query], is_query=True)
+                v = llm_mod.embed(active_embed_cfg, [r.search_query], is_query=True)
                 return v[0] if v is not None else None
             except Exception:
                 return None
@@ -389,7 +394,7 @@ def build_index(paper: Paper) -> PaperIndex:
     return _default_pipeline.build_index(paper)
 
 
-def ensure_embeddings(cfg: llm_mod.LLMConfig, indexes: dict[str, PaperIndex], ids: list[str]) -> str | None:
+def ensure_embeddings(cfg: llm_mod.EmbedConfig, indexes: dict[str, PaperIndex], ids: list[str]) -> str | None:
     return _default_pipeline.ensure_embeddings(cfg, indexes, ids)
 
 
