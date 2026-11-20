@@ -13,7 +13,7 @@ import streamlit as st
 
 from core import engine
 from core.llm import LLMConfig
-from core.pdf_utils import HAS_FITZ, load_pdf, render_page_png
+from core.pdf_utils import load_pdf, render_page_png
 from core.ui import CSS, landing_bottom, landing_top
 
 APP_DIR = Path(__file__).parent
@@ -241,7 +241,7 @@ def render_evidence(items: list[dict], mi: int, label: str, kind: str):
                 f"<div class='ev-q'>“{html.escape(e['quote'])}”</div></div>",
                 unsafe_allow_html=True,
             )
-            if HAS_FITZ and e["paper_id"] in S.papers:
+            if e["paper_id"] in S.papers:
                 if st.toggle(f"View page {e['page']} of the PDF", key=f"pg_{kind}_{mi}_{ei}"):
                     png = _page_png(e["paper_id"], e["page"], e["quote"])
                     if png:
