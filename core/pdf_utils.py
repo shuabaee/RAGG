@@ -1,38 +1,23 @@
 """PDF reading for RAGG: page-by-page text with metadata.
 
-Uses PyMuPDF (fitz) when available; falls back to pypdf.
+Uses PyMuPDF (fitz) for extraction and page rendering.
 Every page keeps its ORIGINAL 1-based page number so citations are real.
 """
 from __future__ import annotations
 
 import hashlib
-import io
 import re
 import unicodedata
 from dataclasses import dataclass, field
 from datetime import date
 
-try:  # PyMuPDF is the primary extractor (named in the proposal)
-    import fitz  # type: ignore
-
-    HAS_FITZ = True
-except Exception:  # pragma: no cover
-    fitz = None
-    HAS_FITZ = False
-
-try:
-    from pypdf import PdfReader  # type: ignore
-
-    HAS_PYPDF = True
-except Exception:  # pragma: no cover
-    PdfReader = None
-    HAS_PYPDF = False
+import fitz
 
 
 _LIGATURES = {
     "ﬀ": "ff", "ﬁ": "fi", "ﬂ": "fl", "ﬃ": "ffi", "ﬄ": "ffl",
     "‘": "'", "’": "'", "“": '"', "”": '"', "­": "",
-    "–": "-", "—": "-", "−": "-", " ": " ", " ": " ",
+    "–": "-", "—": "-", "−": "-", " ": " ", " ": " ",
 }
 
 
@@ -99,40 +84,25 @@ def paper_id_for(filename: str, data: bytes) -> str:
 
 def _pages_fitz(data: bytes) -> tuple[list[str], dict, list[tuple[float, str]]]:
     doc = fitz.open(stream=data, filetype="pdf")
-    pages = [normalize_text(p.get_text("text")) for p in doc]
-    meta = doc.metadata or {}
-    # big-font lines on page 1 -> title candidates
-    spans: list[tuple[float, str]] = []
-    if len(doc):
-        try:
-            d = doc[0].get_text("dict")
-            for b in d.get("blocks", []):
-                for line in b.get("lines", []):
-                    txt = "".join(s.get("text", "") for s in line.get("spans", [])).strip()
-                    if txt:
-                        size = max(s.get("size", 0) for s in line.get("spans", []))
-                        spans.append((size, txt))
-        except Exception:
-            pass
-    doc.close()
-    return pages, meta, spans
-
-
-def _pages_pypdf(data: bytes) -> tuple[list[str], dict, list[tuple[float, str]]]:
-    reader = PdfReader(io.BytesIO(data))
-    pages = []
-    for p in reader.pages:
-        try:
-            pages.append(normalize_text(p.extract_text() or ""))
-        except Exception:
-            pages.append("")
-    meta = {}
     try:
-        m = reader.metadata or {}
-        meta = {"title": m.get("/Title", "") or "", "author": m.get("/Author", "") or ""}
-    except Exception:
-        pass
-    return pages, meta, []
+        pages = [normalize_text(p.get_text("text")) for p in doc]
+        meta = doc.metadata or {}
+        # big-font lines on page 1 -> title candidates
+        spans: list[tuple[float, str]] = []
+        if len(doc):
+            try:
+                d = doc[0].get_text("dict")
+                for b in d.get("blocks", []):
+                    for line in b.get("lines", []):
+                        txt = "".join(s.get("text", "") for s in line.get("spans", [])).strip()
+                        if txt:
+                            size = max(s.get("size", 0) for s in line.get("spans", []))
+                            spans.append((size, txt))
+            except Exception:
+                pass
+        return pages, meta, spans
+    finally:
+        doc.close()
 
 
 _BAD_TITLES = re.compile(r"^(microsoft word|untitled|document\d*|slide \d+|\W*$)|\.(docx?|pdf|tex)$", re.I)
@@ -189,12 +159,7 @@ def load_pdf(filename: str, data: bytes, notebook: str = "General") -> Paper:
     pid = paper_id_for(filename, data)
     paper = Paper(paper_id=pid, filename=filename, data=data, notebook=notebook)
     try:
-        if HAS_FITZ:
-            pages, meta, spans = _pages_fitz(data)
-        elif HAS_PYPDF:
-            pages, meta, spans = _pages_pypdf(data)
-        else:
-            raise RuntimeError("No PDF library installed (pymupdf or pypdf).")
+        pages, meta, spans = _pages_fitz(data)
     except Exception as e:
         paper.status = "error"
         paper.message = f"Could not open this PDF ({type(e).__name__}). It may be encrypted or damaged."
@@ -221,26 +186,25 @@ def load_pdf(filename: str, data: bytes, notebook: str = "General") -> Paper:
 
 def render_page_png(data: bytes, page_number: int, highlight: str | None = None, dpi: int = 110) -> bytes | None:
     """Render one page as PNG, highlighting the quote if it can be found. PyMuPDF only."""
-    if not HAS_FITZ:
-        return None
     try:
         doc = fitz.open(stream=data, filetype="pdf")
-        page = doc[page_number - 1]
-        if highlight:
-            words = highlight.split()
-            probes = [highlight]
-            if len(words) > 8:
-                probes = [" ".join(words[i:i + 6]) for i in range(0, len(words) - 5, 6)]
-            for probe in probes:
-                try:
-                    rects = page.search_for(probe)
-                    for r in rects:
-                        page.add_highlight_annot(r)
-                except Exception:
-                    continue
-        pix = page.get_pixmap(dpi=dpi)
-        png = pix.tobytes("png")
-        doc.close()
-        return png
+        try:
+            page = doc[page_number - 1]
+            if highlight:
+                words = highlight.split()
+                probes = [highlight]
+                if len(words) > 8:
+                    probes = [" ".join(words[i:i + 6]) for i in range(0, len(words) - 5, 6)]
+                for probe in probes:
+                    try:
+                        rects = page.search_for(probe)
+                        for r in rects:
+                            page.add_highlight_annot(r)
+                    except Exception:
+                        continue
+            pix = page.get_pixmap(dpi=dpi)
+            return pix.tobytes("png")
+        finally:
+            doc.close()
     except Exception:
         return None

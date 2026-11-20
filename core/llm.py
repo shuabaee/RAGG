@@ -1,9 +1,10 @@
 """Language-model + embedding providers (plain HTTPS, no heavy SDKs).
 
 Supported:
-  - "gemini"  : Google Gemini API (free tier available at aistudio.google.com)
-  - "openai"  : any OpenAI-compatible API (OpenAI, Groq, OpenRouter, ...) via base_url
-  - "none"    : no model -> RAGG runs in extractive mode (retrieval + verbatim excerpts only)
+- "gemini"  : Google Gemini API (free tier available at aistudio.google.com)
+- "openai"  : any OpenAI-compatible API (OpenAI, Groq, OpenRouter, ...) via base_url
+- "llama"   : local Ollama server (default http://localhost:11434)
+- "none"    : no model -> RAGG runs in extractive mode (retrieval + verbatim excerpts only)
 """
 from __future__ import annotations
 
@@ -21,7 +22,7 @@ class LLMError(Exception):
 
 @dataclass
 class LLMConfig:
-    provider: str = "none"  # gemini | openai | none
+    provider: str = "none"  # gemini | openai | llama | none
     api_key: str = ""
     model: str = ""
     base_url: str = ""
@@ -29,18 +30,22 @@ class LLMConfig:
 
     @property
     def enabled(self) -> bool:
+        if self.provider == "llama":
+            return True
         return self.provider in ("gemini", "openai") and bool(self.api_key)
 
     def resolved_model(self) -> str:
         if self.model:
             return self.model
-        return {"gemini": "gemini-2.5-flash", "openai": "gpt-4o-mini"}.get(self.provider, "")
+        return {"gemini": "gemini-2.5-flash", "openai": "gpt-4o-mini", "llama": "llama3.2:1b"}.get(self.provider, "")
 
     def resolved_embed(self) -> str:
         if self.embed_model:
             return self.embed_model
         if self.provider == "gemini":
             return "gemini-embedding-001"
+        if self.provider == "llama":
+            return "nomic-embed-text"
         if self.provider == "openai" and "api.openai.com" in (self.base_url or "https://api.openai.com/v1"):
             return "text-embedding-3-small"
         return ""  # e.g. Groq has no embedding endpoint -> keyword search only
@@ -84,6 +89,25 @@ def chat(cfg: LLMConfig, system: str, history: list[dict], user: str, temperatur
         parts = (cands[0].get("content") or {}).get("parts") or []
         return "".join(p.get("text", "") for p in parts).strip()
 
+    if cfg.provider == "llama":
+        base = (cfg.base_url or "http://localhost:11434").rstrip("/")
+        msgs = ([{"role": "system", "content": system}] if system else []) + [
+            {"role": m["role"], "content": m["content"]} for m in history
+        ] + [{"role": "user", "content": user}]
+        r = requests.post(
+            f"{base}/api/chat",
+            json={
+                "model": cfg.resolved_model(),
+                "messages": msgs,
+                "stream": False,
+                "options": {"temperature": temperature, "num_predict": max_tokens},
+            },
+            timeout=TIMEOUT,
+        )
+        if r.status_code != 200:
+            _raise(r, "Llama")
+        return ((r.json().get("message") or {}).get("content") or "").strip()
+
     if cfg.provider == "openai":
         base = (cfg.base_url or "https://api.openai.com/v1").rstrip("/")
         msgs = [{"role": "system", "content": system}] + [
@@ -123,6 +147,18 @@ def embed(cfg: LLMConfig, texts: list[str], is_query: bool = False) -> np.ndarra
             if r.status_code != 200:
                 _raise(r, "Gemini embeddings")
             vecs.extend(e["values"] for e in r.json()["embeddings"])
+    elif cfg.provider == "llama":
+        base = (cfg.base_url or "http://localhost:11434").rstrip("/")
+        for i in range(0, len(texts), 90):
+            batch = [t[:8000] for t in texts[i : i + 90]]
+            r = requests.post(
+                f"{base}/api/embed",
+                json={"model": model, "input": batch},
+                timeout=TIMEOUT,
+            )
+            if r.status_code != 200:
+                _raise(r, "Llama embeddings")
+            vecs.extend(r.json()["embeddings"])
     else:
         base = (cfg.base_url or "https://api.openai.com/v1").rstrip("/")
         for i in range(0, len(texts), 256):
