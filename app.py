@@ -298,13 +298,13 @@ def model_settings():
     cfg: LLMConfig = S.llm
     with st.popover("⚙ Model settings"):
         st.caption("Keys entered here stay in this browser session only. For a deployed app, put the key in Streamlit **Secrets**.")
-        opts = {"Google Gemini (free tier)": "gemini", "OpenAI-compatible (OpenAI, Groq, OpenRouter…)": "openai", "None — extractive mode": "none"}
+        opts = {"Google Gemini (free tier)": "gemini", "OpenAI-compatible (OpenAI, Groq, OpenRouter…)": "openai", "None — extractive mode": "none", "Llama3 - local llm (no api key needed)": "llama"}
         cur = next((k for k, v in opts.items() if v == cfg.provider), "None — extractive mode")
         choice = st.selectbox("Provider", list(opts), index=list(opts).index(cur), key="set_provider")
         prov = opts[choice]
         key = st.text_input("API key", value=cfg.api_key if prov == cfg.provider else "", type="password", key="set_key")
         model = st.text_input("Chat model (blank = default)", value=cfg.model if prov == cfg.provider else "", key="set_model",
-                              placeholder="gemini-2.5-flash" if prov == "gemini" else "gpt-4o-mini")
+                              placeholder="gemini-2.5-flash" if prov == "gemini" else "gpt-4o-mini" if prov == "openai" else "llama3.2:1b")
         base = ""
         if prov == "openai":
             base = st.text_input("Base URL (blank = OpenAI)", value=cfg.base_url, key="set_base", placeholder="https://api.groq.com/openai/v1")
