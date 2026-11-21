@@ -327,12 +327,18 @@ def model_settings():
                     installed = [m.get("name") for m in r.json().get("models", []) if m.get("name")]
             except Exception:
                 pass
-            cur_m = cfg.model if prov in (cfg.provider, "llama") and cfg.model else (installed[0] if installed else "qwen3.5:4b")
             if installed:
+                cur_m = cfg.model if prov in (cfg.provider, "llama") and cfg.model in installed else installed[0]
                 idx = installed.index(cur_m) if cur_m in installed else 0
                 model = st.selectbox("Model", installed, index=idx, key="set_model_ollama")
             else:
-                model = st.text_input("Model name", value=cur_m, key="set_model_ollama", placeholder="qwen3.5:4b")
+                st.warning("⚠️ No models detected on this Ollama host. Make sure Ollama is running and a model is downloaded (e.g. `ollama run llama3`), or enter a model name manually.")
+                model = st.text_input(
+                    "Model name",
+                    value=cfg.model if prov in (cfg.provider, "llama") else "",
+                    key="set_model_ollama",
+                    placeholder="No model detected (enter name or leave blank)",
+                )
             key = ""
         elif prov == "gemini":
             key = st.text_input("API key", value=cfg.api_key if prov == cfg.provider else "", type="password", key="set_key")
