@@ -31,7 +31,7 @@ class LLMConfig:
     @property
     def enabled(self) -> bool:
         if self.provider in ("ollama", "llama"):
-            return True
+            return bool(self.resolved_model())
         return self.provider in ("gemini", "openai") and bool(self.api_key)
 
     def resolved_base_url(self) -> str:
@@ -56,7 +56,7 @@ class LLMConfig:
                         return models[0]
             except Exception:
                 pass
-            return "qwen3.5:4b"
+            return ""
         return {"gemini": "gemini-2.5-flash", "openai": "gpt-4o-mini"}.get(self.provider, "")
 
     def resolved_embed(self) -> str:
@@ -81,7 +81,9 @@ class LLMConfig:
         return ""
 
     def label(self) -> str:
-        if not self.enabled:
+        if not self.enabled or not self.resolved_model():
+            if self.provider in ("ollama", "llama"):
+                return "Ollama · No model detected"
             return "Extractive mode (no AI model)"
         prov_name = "Ollama" if self.provider in ("ollama", "llama") else self.provider.title()
         return f"{prov_name} · {self.resolved_model()}"
