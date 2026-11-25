@@ -120,6 +120,7 @@ def _raise(resp: requests.Response, who: str):
 
 
 _NO_THINK: set[str] = set()  # Ollama models that rejected "think": true
+_OAI_QUIRKS: dict[str, dict] = {}  # "base|model" -> which token parameter / temperature that model accepts
 
 
 def _split_reasoning(content: str, thinking: str = "") -> tuple[str, str]:
@@ -182,12 +183,30 @@ def chat_full(cfg: LLMConfig, system: str, history: list[dict], user: str, tempe
         msgs = [{"role": "system", "content": system}] + [
             {"role": m["role"], "content": m["content"]} for m in history
         ] + [{"role": "user", "content": user}]
-        r = requests.post(
-            f"{base}/chat/completions",
-            headers={"Authorization": f"Bearer {cfg.api_key}"},
-            json={"model": cfg.resolved_model(), "messages": msgs, "temperature": temperature, "max_tokens": max_tokens},
-            timeout=TIMEOUT,
+        model = cfg.resolved_model()
+        # newer OpenAI models want max_completion_tokens and may reject a custom temperature;
+        # other OpenAI-compatible servers still expect max_tokens. Learn per model from 400 errors.
+        q = _OAI_QUIRKS.setdefault(
+            f"{base}|{model}",
+            {"tokens": "max_completion_tokens" if "api.openai.com" in base else "max_tokens", "temperature": True},
         )
+        for _ in range(3):
+            # max_completion_tokens also covers hidden reasoning tokens, so give that room (it is only a ceiling)
+            body = {"model": model, "messages": msgs,
+                    q["tokens"]: max_tokens * 3 if q["tokens"] == "max_completion_tokens" else max_tokens}
+            if q["temperature"]:
+                body["temperature"] = temperature
+            r = requests.post(f"{base}/chat/completions", headers={"Authorization": f"Bearer {cfg.api_key}"},
+                              json=body, timeout=TIMEOUT * 2)
+            if r.status_code != 400:
+                break
+            err = (r.text or "").lower()
+            if "max_tokens" in err and "max_completion_tokens" in err:
+                q["tokens"] = "max_tokens" if q["tokens"] == "max_completion_tokens" else "max_completion_tokens"
+            elif "temperature" in err and q["temperature"]:
+                q["temperature"] = False
+            else:
+                break
         if r.status_code != 200:
             _raise(r, "Model API")
         msg = r.json()["choices"][0]["message"]

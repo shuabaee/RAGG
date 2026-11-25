@@ -153,3 +153,61 @@ def test_unclosed_think_is_not_an_answer(monkeypatch):
     _chat_reply(monkeypatch, {"content": "<think>Let me look at S1, S2 and"})
     with pytest.raises(LLMError):
         llm.chat_full(LLMConfig(provider="ollama", model="qwen3:4b"), "sys", [], "q")
+
+
+def _openai(monkeypatch, reject=None):
+    """Fake OpenAI endpoint. reject(body) returns an error message for a 400, or None to answer."""
+    bodies = []
+
+    def post(url, headers=None, json=None, timeout=None, **k):
+        bodies.append(dict(json))
+        err = reject(json) if reject else None
+        if err:
+            return Resp(400, {"error": {"message": err}})
+        return Resp(200, {"choices": [{"message": {"content": "Answer [S1]."}}]})
+
+    monkeypatch.setattr(llm.requests, "post", post)
+    return bodies
+
+
+@pytest.fixture(autouse=True)
+def _clear_openai_quirks():
+    llm._OAI_QUIRKS.clear()
+    yield
+    llm._OAI_QUIRKS.clear()
+
+
+def test_official_openai_uses_max_completion_tokens(monkeypatch):
+    bodies = _openai(monkeypatch)
+    llm.chat_full(LLMConfig(provider="openai", api_key="k", model="gpt-new"), "sys", [], "q")
+    assert "max_completion_tokens" in bodies[0] and "max_tokens" not in bodies[0]
+
+
+def test_compatible_server_keeps_max_tokens(monkeypatch):
+    bodies = _openai(monkeypatch)
+    cfg = LLMConfig(provider="openai", api_key="k", model="llama", base_url="https://api.groq.com/openai/v1")
+    llm.chat_full(cfg, "sys", [], "q")
+    assert "max_tokens" in bodies[0] and "max_completion_tokens" not in bodies[0]
+
+
+def test_switches_token_param_when_told(monkeypatch):
+    msg = "Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead."
+    bodies = _openai(monkeypatch, lambda b: msg if "max_tokens" in b else None)
+    cfg = LLMConfig(provider="openai", api_key="k", model="reasoner", base_url="https://proxy.example/v1")
+    assert llm.chat_full(cfg, "sys", [], "q") == ("Answer [S1].", "")
+    llm.chat_full(cfg, "sys", [], "q")  # remembered: no second failed attempt
+    assert ["max_tokens" in b for b in bodies] == [True, False, False]
+
+
+def test_drops_unsupported_temperature(monkeypatch):
+    msg = "Unsupported value: 'temperature' does not support 0.2 with this model. Only the default (1) value is supported."
+    bodies = _openai(monkeypatch, lambda b: msg if "temperature" in b else None)
+    cfg = LLMConfig(provider="openai", api_key="k", model="reasoner")
+    assert llm.chat_full(cfg, "sys", [], "q")[0] == "Answer [S1]."
+    assert "temperature" in bodies[0] and "temperature" not in bodies[1]
+
+
+def test_other_400_errors_still_raise(monkeypatch):
+    _openai(monkeypatch, lambda b: "The model `nope` does not exist")
+    with pytest.raises(LLMError):
+        llm.chat_full(LLMConfig(provider="openai", api_key="k", model="nope"), "sys", [], "q")
