@@ -124,8 +124,18 @@ _NO_THINK: set[str] = set()  # Ollama models that rejected "think": true
 
 def _split_reasoning(content: str, thinking: str = "") -> tuple[str, str]:
     """Separate a reasoning model's private reasoning from its answer."""
-    answer = _THINK_RE.sub("", content or "").strip()
+    answer = _THINK_RE.sub("", content or "")
     parts = [(thinking or "").strip(), *(t.strip() for t in _THINK_RE.findall(content or ""))]
+    low = answer.lower()
+    if "</think>" in low:  # opening tag missing (qwen3 with thinking off): all before it is reasoning
+        cut = low.rindex("</think>")
+        parts.append(answer[:cut].replace("<think>", "").strip())
+        answer = answer[cut + len("</think>"):]
+    elif "<think>" in low:  # never closed: it ran out of tokens while reasoning
+        cut = low.index("<think>")
+        parts.append(answer[cut + len("<think>"):].strip())
+        answer = answer[:cut]
+    answer = answer.strip()
     reasoning = "\n\n".join(x for x in parts if x)
     return answer, reasoning
 

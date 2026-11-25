@@ -133,6 +133,7 @@ html {{ scroll-behavior:smooth; }}
 }}
 [class*="st-key-pcard_on_"] .stButton button p, [class*="st-key-pcard_on_"] .pc-meta, [class*="st-key-pcard_on_"] [data-testid="stPopover"] button p {{ color:#fff !important; }}
 [class*="st-key-pcard_"] [data-testid="stPopover"] button {{ background:transparent; border:none; box-shadow:none; min-height:0; padding:0 4px; }}
+[class*="st-key-pcard_"] [data-testid="stPopoverButton"] [data-testid="stIconMaterial"] {{ display:none; }}
 .pc-meta {{ font-size:11.5px; font-weight:600; color:#555; margin:4px 0 0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
 .pc-warn {{ font-size:11px; color:#b06000; margin-top:2px; }}
 

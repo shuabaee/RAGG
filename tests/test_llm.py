@@ -127,3 +127,18 @@ def test_think_off_by_default(monkeypatch):
     monkeypatch.setattr(llm.requests, "post", post)
     llm.chat_full(LLMConfig(provider="ollama", model="qwen3:4b"), "sys", [], "q")
     assert bodies[0]["think"] is False
+
+
+def test_reasoning_with_only_closing_tag(monkeypatch):
+    # qwen3 with thinking off: reasoning, then a bare </think>, then the answer
+    _chat_reply(monkeypatch, {"content": "Okay, the user wants the finding. S1 says 6%.\n</think>\n\nGrounding cut errors to 6% [S1]."})
+    content, reasoning = llm.chat_full(LLMConfig(provider="ollama", model="qwen3:4b"), "sys", [], "q")
+    assert content == "Grounding cut errors to 6% [S1]."
+    assert reasoning == "Okay, the user wants the finding. S1 says 6%."
+
+
+def test_unclosed_think_is_not_an_answer(monkeypatch):
+    # ran out of tokens mid-reasoning: nothing usable to show as the answer
+    _chat_reply(monkeypatch, {"content": "<think>Let me look at S1, S2 and"})
+    with pytest.raises(LLMError):
+        llm.chat_full(LLMConfig(provider="ollama", model="qwen3:4b"), "sys", [], "q")
