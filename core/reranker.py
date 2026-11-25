@@ -7,14 +7,22 @@ kept and a one-line notice is returned instead of an error.
 from __future__ import annotations
 
 import os
+import shutil
+import threading
+import time
 
 from .models import Hit
 
 MODEL_NAME = "ms-marco-MiniLM-L-12-v2"
 REFERENCES_PENALTY = 0.35  # same factor retrieval.search applies to reference-list chunks
+LOAD_TIMEOUT = 20.0  # seconds a question waits for the first model download/load
+RETRY_AFTER = 300.0  # seconds before a failed load is tried again
 
+_lock = threading.Lock()
 _ranker = None
 _error: str | None = None
+_error_at = 0.0
+_loading: threading.Thread | None = None
 
 
 def _cache_dir() -> str:
@@ -29,18 +37,46 @@ def _load_ranker():
 
 
 def reset_for_tests() -> None:
-    global _ranker, _error
-    _ranker, _error = None, None
+    global _ranker, _error, _error_at, _loading
+    _ranker, _error, _error_at, _loading = None, None, 0.0, None
+
+
+def _load_in_background() -> None:
+    """Runs in a worker thread: a slow first download never blocks a question for long."""
+    global _ranker, _error, _error_at
+    try:
+        r = _load_ranker()
+        with _lock:
+            _ranker, _error = r, None
+    except Exception as e:
+        # a half-downloaded model dir makes FlashRank skip the download forever; remove it
+        shutil.rmtree(os.path.join(_cache_dir(), MODEL_NAME), ignore_errors=True)
+        with _lock:
+            _error, _error_at = f"{type(e).__name__}: {e}"[:160], time.time()
 
 
 def _get():
-    global _ranker, _error
-    if _ranker is None and _error is None:
-        try:
-            _ranker = _load_ranker()
-        except Exception as e:
-            _error = f"{type(e).__name__}: {e}"[:160]
-    return _ranker
+    global _loading, _error
+    with _lock:
+        if _ranker is not None:
+            return _ranker
+        if _error is not None and time.time() - _error_at < RETRY_AFTER:
+            return None
+        if _loading is None or not _loading.is_alive():
+            _error = None
+            _loading = threading.Thread(target=_load_in_background, daemon=True)
+            _loading.start()
+        worker = _loading
+    worker.join(LOAD_TIMEOUT)
+    with _lock:
+        if _ranker is None and _error is None:
+            return _TimedOut("model still loading, timed out")
+        return _ranker
+
+
+class _TimedOut:
+    def __init__(self, msg: str):
+        self.msg = msg
 
 
 def rerank(query: str, hits: list[Hit], k: int = 6) -> tuple[list[Hit], str]:
@@ -48,6 +84,8 @@ def rerank(query: str, hits: list[Hit], k: int = 6) -> tuple[list[Hit], str]:
     if not hits:
         return [], ""
     ranker = _get()
+    if isinstance(ranker, _TimedOut):
+        return hits[:k], f"Reranker {ranker.msg}; using standard ranking for now."
     if ranker is None:
         return hits[:k], f"Reranker unavailable ({_error}). Using standard ranking."
     try:

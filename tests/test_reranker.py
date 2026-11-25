@@ -89,3 +89,59 @@ def test_references_section_penalised(monkeypatch):
     hits = [Hit(refs[0], 1.0, 1.0, None, 1), Hit(body[0], 0.5, 1.0, None, 1)]
     out, _ = reranker.rerank("sample size limitations", hits, k=2)
     assert out[0].chunk.section != "references"
+
+
+def test_load_timeout_does_not_block(monkeypatch):
+    import threading
+    import time
+
+    gate = threading.Event()
+
+    def slow():
+        gate.wait(5)
+        return FakeRanker()
+
+    monkeypatch.setattr(reranker, "_load_ranker", slow)
+    monkeypatch.setattr(reranker, "LOAD_TIMEOUT", 0.2)
+    t = time.time()
+    out, notice = reranker.rerank("q", _hits(), k=2)
+    assert time.time() - t < 2
+    assert "timed out" in notice and len(out) == 2
+    gate.set()  # the download finishes in the background ...
+    for _ in range(50):
+        if reranker._ranker is not None:
+            break
+        time.sleep(0.05)
+    out, notice = reranker.rerank("limitations sample size", _hits(), k=2)
+    assert notice == "" and out[0].chunk.text == TEXTS[2]  # ... and later questions use it
+
+
+def test_failed_load_is_retried_later(monkeypatch):
+    attempts = {"n": 0}
+
+    def flaky():
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise OSError("network down")
+        return FakeRanker()
+
+    monkeypatch.setattr(reranker, "_load_ranker", flaky)
+    _, notice = reranker.rerank("q", _hits(), k=2)
+    assert notice.startswith("Reranker unavailable")
+    monkeypatch.setattr(reranker, "RETRY_AFTER", 0)
+    _, notice = reranker.rerank("q", _hits(), k=2)
+    assert notice == "" and attempts["n"] == 2
+
+
+def test_failed_load_removes_partial_model_dir(monkeypatch, tmp_path):
+    monkeypatch.setenv("RAGG_RERANK_CACHE", str(tmp_path))
+    partial = tmp_path / reranker.MODEL_NAME
+    partial.mkdir()
+    (partial / "half.onnx").write_bytes(b"\0")
+
+    def broken():
+        raise RuntimeError("corrupt model")
+
+    monkeypatch.setattr(reranker, "_load_ranker", broken)
+    reranker.rerank("q", _hits(), k=2)
+    assert not partial.exists()
