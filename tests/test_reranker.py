@@ -72,3 +72,20 @@ def test_rerank_real_model():
     if notice:
         pytest.skip(notice)
     assert out[0].chunk.text == TEXTS[2]
+
+
+def test_references_section_penalised(monkeypatch):
+    class RefFirst:
+        def rerank(self, req):
+            return [
+                {"id": p["id"], "text": p["text"], "score": 0.8 if "Sample, A." in p["text"] else 0.5}
+                for p in req.passages
+            ]
+
+    monkeypatch.setattr(reranker, "_load_ranker", lambda: RefFirst())
+    body = make_chunks("p1", ["Only 42 students took part, which limits generalizability of the findings."])
+    refs = make_chunks("p1", ["Sample, A. (2020). An example reference used for demonstration only."], page=3, section="references")
+    refs[0].chunk_id = "p1-ref"
+    hits = [Hit(refs[0], 1.0, 1.0, None, 1), Hit(body[0], 0.5, 1.0, None, 1)]
+    out, _ = reranker.rerank("sample size limitations", hits, k=2)
+    assert out[0].chunk.section != "references"

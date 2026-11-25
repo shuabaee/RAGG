@@ -11,6 +11,7 @@ import os
 from .models import Hit
 
 MODEL_NAME = "ms-marco-MiniLM-L-12-v2"
+REFERENCES_PENALTY = 0.35  # same factor retrieval.search applies to reference-list chunks
 
 _ranker = None
 _error: str | None = None
@@ -58,12 +59,14 @@ def rerank(query: str, hits: list[Hit], k: int = 6) -> tuple[list[Hit], str]:
         ranked = ranker.rerank(req)
     except Exception as e:
         return hits[:k], f"Reranker failed ({type(e).__name__}). Using standard ranking."
-    out: list[Hit] = []
-    for r in ranked[:k]:
+    scored: list[Hit] = []
+    for r in ranked:
         h = hits[int(r["id"])]
-        h.rerank = float(r["score"])
-        out.append(h)
-    return out, ""
+        # the cross-encoder ignores sections; keep search's down-weighting of bibliography text
+        h.rerank = float(r["score"]) * (REFERENCES_PENALTY if h.chunk.section == "references" else 1.0)
+        scored.append(h)
+    scored.sort(key=lambda h: -h.rerank)
+    return scored[:k], ""
 
 
 class _Request:
