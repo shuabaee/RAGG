@@ -9,6 +9,7 @@ import re
 import numpy as np
 
 from . import llm as llm_mod
+from . import reranker, vectorstore
 from .chunker import best_sentences, chunk_paper
 from .context_builder import (
     INTENT_QUERY,
@@ -45,19 +46,31 @@ class RAGPipeline:
         indexes: dict[str, PaperIndex],
         ids: list[str],
     ) -> str | None:
-        """Embed chunks for the given papers if the provider supports it. Returns a warning or None."""
-        key = f"{cfg.provider}:{cfg.resolved_embed()}"
+        """Embed chunks for the given papers if the provider supports it. Returns a warning or None.
+
+        With ChromaDB available, vectors are stored on disk and papers already stored are not re-embedded.
+        An in-memory copy is kept for freshly embedded papers as a fallback.
+        """
         if not cfg.enabled or not cfg.resolved_embed():
             return None
+        key = f"{cfg.provider}:{cfg.resolved_embed()}"
+        use_store = vectorstore.available()
         for pid in ids:
             ix = indexes.get(pid)
-            if ix is None or (ix.emb is not None and ix.emb_key == key) or not ix.chunks:
+            if ix is None or ix.emb_key == key or not ix.chunks:
+                continue
+            if use_store and vectorstore.has_paper(key, pid, ix.chunks):
+                ix.emb, ix.emb_key = None, key
                 continue
             try:
-                ix.emb = llm_mod.embed(cfg, [c.text for c in ix.chunks])
-                ix.emb_key = key
+                vecs = llm_mod.embed(cfg, [c.text for c in ix.chunks])
             except Exception as e:  # keep working with keyword search
                 return f"Semantic embeddings unavailable ({e}). Using keyword search only."
+            if vecs is None:
+                continue
+            if use_store:
+                vectorstore.add(key, ix.chunks, vecs)
+            ix.emb, ix.emb_key = vecs, key
         return None
 
     def answer(
@@ -150,18 +163,37 @@ class RAGPipeline:
             all_chunks: list[Chunk] = []
             all_emb = []
             use_dense = True
+            key = f"{active_cfg.provider}:{active_cfg.resolved_embed()}" if active_cfg.enabled else ""
+            stored_ids: list[str] = []
             for p in target_papers:
                 ix = indexes.get(p.paper_id)
                 if not ix:
                     continue
                 all_chunks.extend(ix.chunks)
+                if key and ix.emb_key == key:
+                    stored_ids.append(p.paper_id)
                 if ix.emb is not None and len(ix.emb) == len(ix.chunks):
                     all_emb.append(ix.emb)
                 else:
                     use_dense = False
-            emb = np.vstack(all_emb) if (use_dense and all_emb) else None
-            qv = _qvec() if emb is not None else None
-            hits = search(all_chunks, q_search, k=6, embeddings=emb, query_vec=qv, section_boost=SECTION_BOOST.get(intent))
+            dense_scores = None
+            emb = None
+            qv = _qvec() if stored_ids else None
+            if qv is not None:
+                if vectorstore.available():  # dense retrieval through ChromaDB
+                    dense_scores = vectorstore.query(key, qv, stored_ids, n=40) or None
+                if dense_scores is None and use_dense and all_emb:  # in-memory fallback
+                    emb = np.vstack(all_emb)
+            want = 6
+            k = 20 if active_cfg.rerank else want
+            hits = search(
+                all_chunks, q_search, k=k, embeddings=emb, query_vec=qv if emb is not None else None,
+                section_boost=SECTION_BOOST.get(intent), dense_scores=dense_scores,
+            )
+            if active_cfg.rerank and hits:
+                hits, msg = reranker.rerank(r.search_query, hits, want)
+                if msg:
+                    notice = f"{notice} {msg}".strip()
             selected = [h.chunk for h in hits]
 
             # ---------- sufficiency check (missing-evidence handling)

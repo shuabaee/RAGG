@@ -27,6 +27,7 @@ class LLMConfig:
     model: str = ""
     base_url: str = ""
     embed_model: str = ""
+    rerank: bool = True  # rerank retrieved passages with FlashRank
 
     @property
     def enabled(self) -> bool:

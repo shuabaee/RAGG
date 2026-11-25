@@ -11,7 +11,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from core import engine
+from core import engine, vectorstore
 from core.llm import LLMConfig
 from core.pdf_utils import load_pdf, render_page_png
 from core.ui import CSS, landing_bottom, landing_top
@@ -67,6 +67,7 @@ def init_state():
             model=_secret("RAGG_MODEL"),
             base_url=_secret("OLLAMA_HOST") if provider in ("ollama", "llama") else _secret("OPENAI_BASE_URL"),
             embed_model=_secret("RAGG_EMBED_MODEL"),
+            rerank=_secret("RAGG_RERANK", "1").strip().lower() not in ("0", "false", "off", "no"),
         )
 
 
@@ -353,8 +354,20 @@ def model_settings():
         else:
             key, model, base = "", "", ""
 
+        rerank = st.toggle(
+            "Rerank results (FlashRank)",
+            value=cfg.rerank,
+            key="set_rerank",
+            help="Fetch 20 candidate passages, then let a small cross-encoder pick the 6 most relevant.",
+        )
+        st.caption(
+            f"Vector store: **ChromaDB** (`{vectorstore.location()}`) — embeddings are saved and reused."
+            if vectorstore.available()
+            else "Vector store: **in-memory** (ChromaDB not available) — embeddings are rebuilt each session."
+        )
+
         if st.button("Save settings", key="set_save", type="primary"):
-            S.llm = LLMConfig(provider=prov, api_key=key.strip(), model=model.strip(), base_url=base.strip(), embed_model=cfg.embed_model)
+            S.llm = LLMConfig(provider=prov, api_key=key.strip(), model=model.strip(), base_url=base.strip(), embed_model=cfg.embed_model, rerank=rerank)
             for ix in S.indexes.values():  # embeddings must be rebuilt for a new provider
                 ix.emb, ix.emb_key = None, ""
             st.rerun()
