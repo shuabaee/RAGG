@@ -117,7 +117,7 @@ def test_think_flag_retries_for_models_without_thinking(monkeypatch):
     assert [b["think"] for b in bodies] == [True, False, False]
 
 
-def test_think_off_by_default(monkeypatch):
+def _record_posts(monkeypatch):
     bodies = []
 
     def post(url, json=None, timeout=None, **k):
@@ -125,8 +125,19 @@ def test_think_off_by_default(monkeypatch):
         return Resp(200, {"message": {"content": "ok"}})
 
     monkeypatch.setattr(llm.requests, "post", post)
-    llm.chat_full(LLMConfig(provider="ollama", model="qwen3:4b"), "sys", [], "q")
-    assert bodies[0]["think"] is False
+    return bodies
+
+
+def test_think_on_by_default_with_bigger_budget(monkeypatch):
+    bodies = _record_posts(monkeypatch)
+    llm.chat_full(LLMConfig(provider="ollama", model="qwen3:4b"), "sys", [], "q", max_tokens=2048)
+    assert bodies[0]["think"] is True and bodies[0]["options"]["num_predict"] == 6144
+
+
+def test_think_can_be_turned_off(monkeypatch):
+    bodies = _record_posts(monkeypatch)
+    llm.chat_full(LLMConfig(provider="ollama", model="qwen3:4b", think=False), "sys", [], "q", max_tokens=2048)
+    assert bodies[0]["think"] is False and bodies[0]["options"]["num_predict"] == 2048
 
 
 def test_reasoning_with_only_closing_tag(monkeypatch):

@@ -64,7 +64,7 @@ def init_state():
             base_url=_secret("OLLAMA_HOST") if provider in ("ollama", "llama") else _secret("OPENAI_BASE_URL"),
             embed_model=_secret("RAGG_EMBED_MODEL"),
             rerank=_secret("RAGG_RERANK", "1").strip().lower() not in ("0", "false", "off", "no"),
-            think=_secret("RAGG_THINK", "0").strip().lower() in ("1", "true", "on", "yes"),
+            think=_secret("RAGG_THINK", "1").strip().lower() not in ("0", "false", "off", "no"),
         )
 
 
@@ -351,14 +351,15 @@ def model_settings():
         else:
             key, model, base = "", "", ""
 
-        think = st.toggle(
-            "Let the model think first",
-            value=cfg.think,
-            key="set_think",
-            disabled=prov == "none",
-            help="Reasoning models (e.g. qwen3, deepseek-r1) reason before answering. Slower; "
-                 "their reasoning appears under “Thought process”. Ignored by models that can’t do it.",
-        )
+        think = cfg.think  # only Ollama exposes a model's reasoning, so only Ollama gets the switch
+        if prov == "ollama":
+            think = st.toggle(
+                "Let the model think first",
+                value=cfg.think,
+                key="set_think",
+                help="Reasoning models (e.g. qwen3, deepseek-r1) reason before answering and get more room to finish. "
+                     "Their reasoning appears under “Thought process”. Models that can’t reason just answer.",
+            )
         rerank = st.toggle(
             "Rerank results (FlashRank)",
             value=cfg.rerank,

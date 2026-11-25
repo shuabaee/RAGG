@@ -62,7 +62,7 @@ class LLMConfig:
     base_url: str = ""
     embed_model: str = ""
     rerank: bool = True  # rerank retrieved passages with FlashRank
-    think: bool = False  # let reasoning models think first (slower); reasoning is shown separately
+    think: bool = True  # Ollama: let reasoning models think first with a bigger budget; reasoning shown separately
 
     @property
     def enabled(self) -> bool:
