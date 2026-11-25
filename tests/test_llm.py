@@ -86,3 +86,44 @@ def test_chat_strips_think_tags(monkeypatch):
     _chat_reply(monkeypatch, {"content": "<think>secret plan</think>\nThe hybrid method worked best [S1]."})
     out = llm.chat(LLMConfig(provider="ollama", model="qwen3:4b"), "sys", [], "q")
     assert out == "The hybrid method worked best [S1]."
+
+
+def test_chat_full_returns_reasoning_separately(monkeypatch):
+    _chat_reply(monkeypatch, {"content": "Hybrid worked best [S1].", "thinking": "Compare S1 and S2 first."})
+    content, reasoning = llm.chat_full(LLMConfig(provider="ollama", model="qwen3:4b"), "sys", [], "q")
+    assert content == "Hybrid worked best [S1]." and reasoning == "Compare S1 and S2 first."
+
+
+def test_think_tags_become_reasoning(monkeypatch):
+    _chat_reply(monkeypatch, {"content": "<think>check S2</think>Answer [S2]."})
+    content, reasoning = llm.chat_full(LLMConfig(provider="ollama", model="m"), "sys", [], "q")
+    assert content == "Answer [S2]." and reasoning == "check S2"
+
+
+def test_think_flag_retries_for_models_without_thinking(monkeypatch):
+    bodies = []
+
+    def post(url, json=None, timeout=None, **k):
+        bodies.append(dict(json))
+        if json.get("think"):
+            return Resp(400, {"error": '"llama3:latest" does not support thinking'})
+        return Resp(200, {"message": {"content": "Plain answer."}})
+
+    monkeypatch.setattr(llm.requests, "post", post)
+    cfg = LLMConfig(provider="ollama", model="llama3:latest", think=True)
+    assert llm.chat_full(cfg, "sys", [], "q") == ("Plain answer.", "")
+    assert [b["think"] for b in bodies] == [True, False]
+    llm.chat_full(cfg, "sys", [], "q")  # remembered: no second failed attempt
+    assert [b["think"] for b in bodies] == [True, False, False]
+
+
+def test_think_off_by_default(monkeypatch):
+    bodies = []
+
+    def post(url, json=None, timeout=None, **k):
+        bodies.append(json)
+        return Resp(200, {"message": {"content": "ok"}})
+
+    monkeypatch.setattr(llm.requests, "post", post)
+    llm.chat_full(LLMConfig(provider="ollama", model="qwen3:4b"), "sys", [], "q")
+    assert bodies[0]["think"] is False

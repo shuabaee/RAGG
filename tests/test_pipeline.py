@@ -113,7 +113,7 @@ def test_answer_queries_chroma(corpus, store, monkeypatch):
 
     monkeypatch.setattr(llm_mod, "embed", fake_embed)
     monkeypatch.setattr(pipeline.vectorstore, "query", spy)
-    monkeypatch.setattr(llm_mod, "chat", lambda *a, **k: (_ for _ in ()).throw(llm_mod.LLMError("offline")))
+    monkeypatch.setattr(llm_mod, "chat_full", lambda *a, **k: (_ for _ in ()).throw(llm_mod.LLMError("offline")))
     monkeypatch.setattr(reranker, "_load_ranker", lambda: PickLast())
     cfg = LLMConfig(provider="ollama", model="fake-chat", embed_model="fake-embed")
     ix = _indexes(corpus)
@@ -144,7 +144,7 @@ def _cfg():
 
 
 def _no_chat(monkeypatch):
-    monkeypatch.setattr(llm_mod, "chat", lambda *a, **k: (_ for _ in ()).throw(llm_mod.LLMError("offline")))
+    monkeypatch.setattr(llm_mod, "chat_full", lambda *a, **k: (_ for _ in ()).throw(llm_mod.LLMError("offline")))
 
 
 def test_embed_key_includes_base_url():
@@ -188,9 +188,9 @@ def test_source_attributes_are_escaped(corpus, monkeypatch):
 
     def capture(cfg, system, history, user, **k):
         seen["user"] = user
-        return "The hybrid method worked best [S1]."
+        return "The hybrid method worked best [S1].", ""
 
-    monkeypatch.setattr(llm_mod, "chat", capture)
+    monkeypatch.setattr(llm_mod, "chat_full", capture)
     monkeypatch.setattr(reranker, "_load_ranker", lambda: PickLast())
     papers = [load_pdf(p.name, p.read_bytes()) for p in SAMPLE]
     papers[0].title = 'Say "hi" <b>loud</b>'
@@ -198,3 +198,12 @@ def test_source_attributes_are_escaped(corpus, monkeypatch):
     pipeline.answer("Which retrieval method worked best?", papers, _indexes(papers), [], [], cfg)
     assert 'paper_title="Say "hi"' not in seen["user"]
     assert "Say &quot;hi&quot; &lt;b&gt;loud&lt;/b&gt;" in seen["user"]
+
+
+def test_reply_carries_reasoning(corpus, monkeypatch):
+    monkeypatch.setattr(llm_mod, "chat_full", lambda *a, **k: ("The hybrid method worked best [S1].", "Looked at S1."))
+    monkeypatch.setattr(reranker, "_load_ranker", lambda: PickLast())
+    cfg = LLMConfig(provider="openai", api_key="k", model="m")
+    rep = pipeline.answer("Which retrieval method worked best?", corpus, _indexes(corpus), [], [], cfg)
+    assert rep.mode == "ai" and rep.reasoning == "Looked at S1."
+    assert "Looked at S1" not in rep.plain  # reasoning never goes back into chat history

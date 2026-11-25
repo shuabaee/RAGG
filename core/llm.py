@@ -17,7 +17,7 @@ import requests
 TIMEOUT = 90
 TAGS_TTL = 15.0  # seconds to reuse Ollama's model list (Streamlit re-runs the script on every click)
 EMBED_FAMILIES = ("nomic-embed-text", "mxbai-embed-large", "bge-m3", "snowflake-arctic-embed", "all-minilm", "embed")
-_THINK_RE = re.compile(r"<think>.*?</think>", re.S | re.I)
+_THINK_RE = re.compile(r"<think>(.*?)</think>", re.S | re.I)
 _tags_cache: dict[str, tuple[float, list[str]]] = {}
 
 
@@ -62,6 +62,7 @@ class LLMConfig:
     base_url: str = ""
     embed_model: str = ""
     rerank: bool = True  # rerank retrieved passages with FlashRank
+    think: bool = False  # let reasoning models think first (slower); reasoning is shown separately
 
     @property
     def enabled(self) -> bool:
@@ -118,30 +119,53 @@ def _raise(resp: requests.Response, who: str):
     raise LLMError(f"{who} error {resp.status_code}: {msg}")
 
 
-def chat(cfg: LLMConfig, system: str, history: list[dict], user: str, temperature: float = 0.2, max_tokens: int = 2048) -> str:
-    """history: list of {"role": "user"|"assistant", "content": str}"""
+_NO_THINK: set[str] = set()  # Ollama models that rejected "think": true
+
+
+def _split_reasoning(content: str, thinking: str = "") -> tuple[str, str]:
+    """Separate a reasoning model's private reasoning from its answer."""
+    answer = _THINK_RE.sub("", content or "").strip()
+    parts = [(thinking or "").strip(), *(t.strip() for t in _THINK_RE.findall(content or ""))]
+    reasoning = "\n\n".join(x for x in parts if x)
+    return answer, reasoning
+
+
+def chat_full(cfg: LLMConfig, system: str, history: list[dict], user: str, temperature: float = 0.2,
+              max_tokens: int = 2048) -> tuple[str, str]:
+    """Return (answer, reasoning). Reasoning is "" for models that do not expose it.
+
+    history: list of {"role": "user"|"assistant", "content": str}
+    """
     if cfg.provider in ("ollama", "llama"):
         base = cfg.resolved_base_url()
+        model = cfg.resolved_model()
         msgs = ([{"role": "system", "content": system}] if system else []) + [
             {"role": m["role"], "content": m["content"]} for m in history
         ] + [{"role": "user", "content": user}]
-        body = {
-            "model": cfg.resolved_model(),
-            "messages": msgs,
-            "stream": False,
-            "think": False,
-            "options": {"temperature": temperature, "num_predict": max_tokens, "num_ctx": 8192},
-        }
-        r = requests.post(f"{base}/api/chat", json=body, timeout=TIMEOUT)
+
+        def _post(think: bool):
+            body = {
+                "model": model,
+                "messages": msgs,
+                "stream": False,
+                "think": think,
+                # reasoning eats tokens before the answer starts, so give it room
+                "options": {"temperature": temperature, "num_predict": max_tokens * (3 if think else 1), "num_ctx": 8192},
+            }
+            return requests.post(f"{base}/api/chat", json=body, timeout=TIMEOUT * (3 if think else 1))
+
+        think = cfg.think and model not in _NO_THINK
+        r = _post(think)
+        if think and r.status_code == 400 and "think" in (r.text or "").lower():
+            _NO_THINK.add(model)  # this model cannot reason separately; don't ask again
+            r = _post(False)
         if r.status_code != 200:
             _raise(r, "Ollama")
-        data = r.json()
-        msg = data.get("message") or {}
-        # reasoning models may put their private reasoning in <think> tags or a separate field; never show it
-        content = _THINK_RE.sub("", msg.get("content") or "").strip()
-        if not content:
+        msg = r.json().get("message") or {}
+        answer, reasoning = _split_reasoning(msg.get("content") or "", msg.get("thinking") or "")
+        if not answer:
             raise LLMError("the model returned no answer (it may have used its whole token budget on reasoning)")
-        return content
+        return answer, reasoning
 
     if cfg.provider == "openai":
         base = (cfg.base_url or "https://api.openai.com/v1").rstrip("/")
@@ -156,9 +180,18 @@ def chat(cfg: LLMConfig, system: str, history: list[dict], user: str, temperatur
         )
         if r.status_code != 200:
             _raise(r, "Model API")
-        return (r.json()["choices"][0]["message"]["content"] or "").strip()
+        msg = r.json()["choices"][0]["message"]
+        answer, reasoning = _split_reasoning(msg.get("content") or "", msg.get("reasoning_content") or "")
+        if not answer:
+            raise LLMError("the model returned no answer")
+        return answer, reasoning
 
     raise LLMError("No language model configured.")
+
+
+def chat(cfg: LLMConfig, system: str, history: list[dict], user: str, temperature: float = 0.2, max_tokens: int = 2048) -> str:
+    """Answer only (reasoning, if any, is dropped)."""
+    return chat_full(cfg, system, history, user, temperature, max_tokens)[0]
 
 
 def embed(cfg: LLMConfig, texts: list[str], is_query: bool = False) -> np.ndarray | None:

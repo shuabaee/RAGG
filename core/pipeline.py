@@ -271,7 +271,7 @@ class RAGPipeline:
             f"Task: {task}\n\nQuestion: {question}"
         )
         hist = [{"role": m["role"], "content": m["content"][:2500]} for m in history[-6:]]
-        raw = llm_mod.chat(cfg, SYSTEM_PROMPT, hist, user_msg)
+        raw, reasoning = llm_mod.chat_full(cfg, SYSTEM_PROMPT, hist, user_msg)
 
         part1, _, part2 = raw.partition("### EVIDENCE")
         part1 = part1.strip()
@@ -364,7 +364,7 @@ class RAGPipeline:
                 c = chunks[i - 1]
                 evidence.append(Evidence(c.paper_id, c.filename, c.page, c.section, " ".join(best_sentences(c.text, question, 2)), "retrieved"))
 
-        return Reply(content=content, plain=plain, evidence=evidence, focus_ids=focus, mode="ai")
+        return Reply(content=content, plain=plain, evidence=evidence, focus_ids=focus, mode="ai", reasoning=reasoning)
 
     def _extractive(
         self,
@@ -379,7 +379,7 @@ class RAGPipeline:
         lines: list[str] = []
         plain: list[str] = []
         evidence: list[Evidence] = []
-        head = "*Extractive mode: no AI model is connected, so I am showing the most relevant verbatim text from your papers. Pick Ollama or ChatGPT in ⚙ Model settings for written answers.*\n\n"
+        head = "*Extractive mode: no AI model is connected, so I am showing the most relevant verbatim text from your papers. Pick Ollama or ChatGPT in Model settings for written answers.*\n\n"
 
         if r.intent in ("summary", "compare", "rrl"):
             heads = {

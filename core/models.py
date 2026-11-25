@@ -56,3 +56,4 @@ class Reply:
     focus_ids: list[str] = field(default_factory=list)
     mode: str = ""  # scope | ai | extractive | refuse
     notice: str = ""
+    reasoning: str = ""  # the model's private reasoning, shown collapsed; never sent back as history
