@@ -373,7 +373,7 @@ class RAGPipeline:
         lines: list[str] = []
         plain: list[str] = []
         evidence: list[Evidence] = []
-        head = "*Extractive mode: no AI model is connected, so I am showing the most relevant verbatim text from your papers. Add an API key in ⚙ Model settings for written answers.*\n\n"
+        head = "*Extractive mode: no AI model is connected, so I am showing the most relevant verbatim text from your papers. Pick Ollama or ChatGPT in ⚙ Model settings for written answers.*\n\n"
 
         if r.intent in ("summary", "compare", "rrl"):
             heads = {

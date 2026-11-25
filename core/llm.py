@@ -2,9 +2,8 @@
 
 Supported:
   - "ollama" / "llama": local Ollama server (e.g. http://localhost:11434)
-  - "gemini"          : Google Gemini API (free tier available at aistudio.google.com)
   - "openai"          : any OpenAI-compatible API (OpenAI, Groq, OpenRouter, ...) via base_url
-  - "none"            : no model -> RAGG runs in extractive mode (retrieval + verbatim excerpts only)
+  - "none"            : internal fallback when nothing is configured -> extractive mode
 """
 from __future__ import annotations
 
@@ -22,7 +21,7 @@ class LLMError(Exception):
 
 @dataclass
 class LLMConfig:
-    provider: str = "none"  # ollama | llama | gemini | openai | none
+    provider: str = "ollama"  # ollama | llama | openai | none (internal fallback)
     api_key: str = ""
     model: str = ""
     base_url: str = ""
@@ -33,7 +32,7 @@ class LLMConfig:
     def enabled(self) -> bool:
         if self.provider in ("ollama", "llama"):
             return bool(self.resolved_model())
-        return self.provider in ("gemini", "openai") and bool(self.api_key)
+        return self.provider == "openai" and bool(self.api_key)
 
     def resolved_base_url(self) -> str:
         if self.base_url:
@@ -58,13 +57,11 @@ class LLMConfig:
             except Exception:
                 pass
             return ""
-        return {"gemini": "gemini-2.5-flash", "openai": "gpt-4o-mini"}.get(self.provider, "")
+        return {"openai": "gpt-4o-mini"}.get(self.provider, "")
 
     def resolved_embed(self) -> str:
         if self.embed_model:
             return self.embed_model
-        if self.provider == "gemini":
-            return "gemini-embedding-001"
         if self.provider in ("ollama", "llama"):
             try:
                 base = self.resolved_base_url()
@@ -86,7 +83,7 @@ class LLMConfig:
             if self.provider in ("ollama", "llama"):
                 return "Ollama · No model detected"
             return "Extractive mode (no AI model)"
-        prov_name = "Ollama" if self.provider in ("ollama", "llama") else self.provider.title()
+        prov_name = "Ollama" if self.provider in ("ollama", "llama") else "ChatGPT"
         return f"{prov_name} · {self.resolved_model()}"
 
 
@@ -123,28 +120,6 @@ def chat(cfg: LLMConfig, system: str, history: list[dict], user: str, temperatur
             content = (msg.get("thinking") or "").strip()
         return content
 
-    if cfg.provider == "gemini":
-        contents = []
-        for m in history:
-            contents.append({"role": "user" if m["role"] == "user" else "model", "parts": [{"text": m["content"]}]})
-        contents.append({"role": "user", "parts": [{"text": user}]})
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{cfg.resolved_model()}:generateContent"
-        body = {
-            "systemInstruction": {"parts": [{"text": system}]},
-            "contents": contents,
-            "generationConfig": {"temperature": temperature, "maxOutputTokens": max_tokens},
-        }
-        r = requests.post(url, params={"key": cfg.api_key}, json=body, timeout=TIMEOUT)
-        if r.status_code != 200:
-            _raise(r, "Gemini")
-        data = r.json()
-        cands = data.get("candidates") or []
-        if not cands:
-            reason = (data.get("promptFeedback") or {}).get("blockReason", "no answer returned")
-            raise LLMError(f"Gemini returned no answer ({reason}).")
-        parts = (cands[0].get("content") or {}).get("parts") or []
-        return "".join(p.get("text", "") for p in parts).strip()
-
     if cfg.provider == "openai":
         base = (cfg.base_url or "https://api.openai.com/v1").rstrip("/")
         msgs = [{"role": "system", "content": system}] + [
@@ -169,22 +144,7 @@ def embed(cfg: LLMConfig, texts: list[str], is_query: bool = False) -> np.ndarra
     if not cfg.enabled or not model or not texts:
         return None
     vecs: list[list[float]] = []
-    if cfg.provider == "gemini":
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:batchEmbedContents"
-        task = "RETRIEVAL_QUERY" if is_query else "RETRIEVAL_DOCUMENT"
-        for i in range(0, len(texts), 90):
-            batch = texts[i : i + 90]
-            body = {
-                "requests": [
-                    {"model": f"models/{model}", "content": {"parts": [{"text": t[:6000]}]}, "taskType": task}
-                    for t in batch
-                ]
-            }
-            r = requests.post(url, params={"key": cfg.api_key}, json=body, timeout=TIMEOUT)
-            if r.status_code != 200:
-                _raise(r, "Gemini embeddings")
-            vecs.extend(e["values"] for e in r.json()["embeddings"])
-    elif cfg.provider in ("ollama", "llama"):
+    if cfg.provider in ("ollama", "llama"):
         base = cfg.resolved_base_url()
         for i in range(0, len(texts), 64):
             batch = [t[:4000] for t in texts[i : i + 64]]

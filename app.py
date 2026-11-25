@@ -48,19 +48,15 @@ def init_state():
     s.setdefault("pending_q", None)
     s.setdefault("page_cache", {})
     if "llm" not in s:
-        gem, oai = _secret("GEMINI_API_KEY"), _secret("OPENAI_API_KEY")
+        oai = _secret("OPENAI_API_KEY")
         prov_env = _secret("RAGG_PROVIDER").lower()
-        if prov_env:
+        if prov_env in ("ollama", "openai", "none"):
             provider = prov_env
-        elif gem:
-            provider = "gemini"
         elif oai:
             provider = "openai"
-        elif _secret("OLLAMA_HOST"):
-            provider = "ollama"
         else:
-            provider = "none"
-        key = gem if provider == "gemini" else oai if provider == "openai" else ""
+            provider = "ollama"  # default: local Ollama; without it running, RAGG falls back to extractive mode
+        key = oai if provider == "openai" else ""
         s.llm = LLMConfig(
             provider=provider,
             api_key=key,
@@ -311,11 +307,10 @@ def model_settings():
         st.caption("Keys entered here stay in this browser session only. For a deployed app, put the key in Streamlit **Secrets**.")
         opts = {
             "Ollama (local)": "ollama",
-            "Google Gemini (free tier)": "gemini",
-            "OpenAI-compatible (OpenAI, Groq, OpenRouter…)": "openai",
+            "ChatGPT (OpenAI API key)": "openai",
             "None — extractive mode": "none",
         }
-        cur = next((k for k, v in opts.items() if v in (cfg.provider, "ollama" if cfg.provider == "llama" else "")), "None — extractive mode")
+        cur = next((k for k, v in opts.items() if v in (cfg.provider, "ollama" if cfg.provider == "llama" else "")), "Ollama (local)")
         choice = st.selectbox("Provider", list(opts), index=list(opts).index(cur), key="set_provider")
         prov = opts[choice]
         if prov == "ollama":
@@ -341,16 +336,12 @@ def model_settings():
                     placeholder="No model detected (enter name or leave blank)",
                 )
             key = ""
-        elif prov == "gemini":
-            key = st.text_input("API key", value=cfg.api_key if prov == cfg.provider else "", type="password", key="set_key")
-            model = st.text_input("Chat model (blank = default)", value=cfg.model if prov == cfg.provider else "", key="set_model",
-                                  placeholder="gemini-2.5-flash")
-            base = ""
-        elif prov == "openai":
-            key = st.text_input("API key", value=cfg.api_key if prov == cfg.provider else "", type="password", key="set_key")
-            model = st.text_input("Chat model (blank = default)", value=cfg.model if prov == cfg.provider else "", key="set_model",
+        elif prov == "openai":  # ChatGPT
+            key = st.text_input("OpenAI API key", value=cfg.api_key if prov == cfg.provider else "", type="password", key="set_key",
+                                placeholder="sk-...")
+            model = st.text_input("ChatGPT model (blank = default)", value=cfg.model if prov == cfg.provider else "", key="set_model",
                                   placeholder="gpt-4o-mini")
-            base = st.text_input("Base URL (blank = OpenAI)", value=cfg.base_url if prov == cfg.provider else "", key="set_base", placeholder="https://api.groq.com/openai/v1")
+            base = cfg.base_url if prov == cfg.provider else ""  # OPENAI_BASE_URL secret still honoured
         else:
             key, model, base = "", "", ""
 

@@ -241,7 +241,7 @@ def landing_bottom() -> str:
     <details><summary>How are quotes verified?</summary>
       <p>The app, not the AI, checks every excerpt against the extracted text of the cited page. A green <b>Verified verbatim</b> badge means the exact words were found there. If the AI's excerpt does not match, RAGG shows the closest real sentence from the page instead, labelled as such.</p></details>
     <details><summary>Do I need an API key?</summary>
-      <p>No. Without a key RAGG runs in <b>extractive mode</b>: it still searches your papers and shows the most relevant verbatim passages with pages. With a Gemini or OpenAI-compatible key, it also writes summaries, comparisons, and explanations grounded in those passages.</p></details>
+      <p>No. Without a key RAGG runs in <b>extractive mode</b>: it still searches your papers and shows the most relevant verbatim passages with pages. With a local Ollama model or a ChatGPT (OpenAI) key, it also writes summaries, comparisons, and explanations grounded in those passages.</p></details>
   </div>
 </div>
 <div class="foot">
