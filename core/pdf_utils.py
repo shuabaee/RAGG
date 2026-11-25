@@ -79,7 +79,7 @@ class Paper:
 
 
 def paper_id_for(filename: str, data: bytes) -> str:
-    return hashlib.sha1(filename.encode() + data[:200000]).hexdigest()[:12]
+    return hashlib.sha1(filename.encode() + data).hexdigest()[:12]  # whole file: a revised PDF is a new paper
 
 
 def _pages_fitz(data: bytes) -> tuple[list[str], dict, list[tuple[float, str]]]:

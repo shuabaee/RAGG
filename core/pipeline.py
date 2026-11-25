@@ -28,6 +28,11 @@ from .router import Route, route
 from .verifier import _cite_html, _cite_plain, verify_quote
 
 
+def _attr(v) -> str:
+    """Escape a value for use inside a double-quoted tag attribute in the prompt."""
+    return html.escape(str(v), quote=True)
+
+
 def embed_key(cfg: llm_mod.LLMConfig) -> str:
     """Identifies the embedding space: provider, model and server (vectors from different ones never mix)."""
     return f"{cfg.provider}:{cfg.resolved_embed()}@{cfg.resolved_base_url()}"
@@ -253,7 +258,8 @@ class RAGPipeline:
             title = p.display_title if p else c.filename
             safe = c.text.replace("</source>", "</ source>")
             src_lines.append(
-                f'<source id="S{i}" file="{c.filename}" page="{c.page}" section="{c.section}" paper_title="{title}">\n{safe}\n</source>'
+                f'<source id="S{i}" file="{_attr(c.filename)}" page="{c.page}" section="{_attr(c.section)}" '
+                f'paper_title="{_attr(title)}">\n{safe}\n</source>'
             )
         papers_note = "\n".join(f"- {p.display_title} ({p.filename}; {p.short_label})" for p in scope_papers[:12])
         task = TASKS.get(r.intent, TASKS["qa"])

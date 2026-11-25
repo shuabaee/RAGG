@@ -181,3 +181,20 @@ def test_paper_not_stored_still_gets_dense_scores(corpus, store, monkeypatch):
     pipeline.answer(QUESTION, corpus, ix, [], [], _cfg())
     pids = {cid.rsplit("-", 1)[0] for cid in seen["dense"]}
     assert pids == {a.paper_id, b.paper_id}
+
+
+def test_source_attributes_are_escaped(corpus, monkeypatch):
+    seen = {}
+
+    def capture(cfg, system, history, user, **k):
+        seen["user"] = user
+        return "The hybrid method worked best [S1]."
+
+    monkeypatch.setattr(llm_mod, "chat", capture)
+    monkeypatch.setattr(reranker, "_load_ranker", lambda: PickLast())
+    papers = [load_pdf(p.name, p.read_bytes()) for p in SAMPLE]
+    papers[0].title = 'Say "hi" <b>loud</b>'
+    cfg = LLMConfig(provider="openai", api_key="k", model="m", embed_model="")
+    pipeline.answer("Which retrieval method worked best?", papers, _indexes(papers), [], [], cfg)
+    assert 'paper_title="Say "hi"' not in seen["user"]
+    assert "Say &quot;hi&quot; &lt;b&gt;loud&lt;/b&gt;" in seen["user"]
