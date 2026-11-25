@@ -7,12 +7,47 @@ Supported:
 """
 from __future__ import annotations
 
+import re
+import time
 from dataclasses import dataclass
 
 import numpy as np
 import requests
 
 TIMEOUT = 90
+TAGS_TTL = 15.0  # seconds to reuse Ollama's model list (Streamlit re-runs the script on every click)
+EMBED_FAMILIES = ("nomic-embed-text", "mxbai-embed-large", "bge-m3", "snowflake-arctic-embed", "all-minilm", "embed")
+_THINK_RE = re.compile(r"<think>.*?</think>", re.S | re.I)
+_tags_cache: dict[str, tuple[float, list[str]]] = {}
+
+
+def clear_model_cache() -> None:
+    _tags_cache.clear()
+
+
+def ollama_models(base: str) -> list[str]:
+    """Installed Ollama model names, cached for TAGS_TTL seconds ([] when Ollama is unreachable)."""
+    base = base.rstrip("/")
+    hit = _tags_cache.get(base)
+    if hit and time.time() - hit[0] < TAGS_TTL:
+        return hit[1]
+    names: list[str] = []
+    try:
+        r = requests.get(f"{base}/api/tags", timeout=1.0)
+        if r.status_code == 200:
+            names = [m.get("name") for m in r.json().get("models", []) if m.get("name")]
+    except Exception:
+        pass
+    _tags_cache[base] = (time.time(), names)
+    return names
+
+
+def is_embedding_model(name: str) -> bool:
+    return any(f in name.lower() for f in EMBED_FAMILIES)
+
+
+def ollama_chat_models(base: str) -> list[str]:
+    return [n for n in ollama_models(base) if not is_embedding_model(n)]
 
 
 class LLMError(Exception):
@@ -47,33 +82,20 @@ class LLMConfig:
         if self.model:
             return self.model
         if self.provider in ("ollama", "llama"):
-            try:
-                base = self.resolved_base_url()
-                r = requests.get(f"{base}/api/tags", timeout=1.0)
-                if r.status_code == 200:
-                    models = [m.get("name") for m in r.json().get("models", []) if m.get("name")]
-                    if models:
-                        return models[0]
-            except Exception:
-                pass
-            return ""
+            chat_models = ollama_chat_models(self.resolved_base_url())
+            return chat_models[0] if chat_models else ""
         return {"openai": "gpt-4o-mini"}.get(self.provider, "")
 
     def resolved_embed(self) -> str:
         if self.embed_model:
             return self.embed_model
         if self.provider in ("ollama", "llama"):
-            try:
-                base = self.resolved_base_url()
-                r = requests.get(f"{base}/api/tags", timeout=1.0)
-                if r.status_code == 200:
-                    names = [m.get("name", "") for m in r.json().get("models", [])]
-                    for emb in ("nomic-embed-text", "all-minilm", "bge-m3", "mxbai-embed-large"):
-                        if any(emb in n for n in names):
-                            return emb
-            except Exception:
-                pass
-            return ""  # If no embedding model installed, falls back cleanly to BM25 search without 404 warning
+            names = ollama_models(self.resolved_base_url())
+            for family in EMBED_FAMILIES:  # in order of preference
+                for n in names:
+                    if family in n:
+                        return n  # the installed tag, e.g. "nomic-embed-text:v1.5"
+            return ""  # no embedding model installed -> keyword search only
         if self.provider == "openai" and "api.openai.com" in (self.base_url or "https://api.openai.com/v1"):
             return "text-embedding-3-small"
         return ""
@@ -115,9 +137,10 @@ def chat(cfg: LLMConfig, system: str, history: list[dict], user: str, temperatur
             _raise(r, "Ollama")
         data = r.json()
         msg = data.get("message") or {}
-        content = (msg.get("content") or "").strip()
+        # reasoning models may put their private reasoning in <think> tags or a separate field; never show it
+        content = _THINK_RE.sub("", msg.get("content") or "").strip()
         if not content:
-            content = (msg.get("thinking") or "").strip()
+            raise LLMError("the model returned no answer (it may have used its whole token budget on reasoning)")
         return content
 
     if cfg.provider == "openai":

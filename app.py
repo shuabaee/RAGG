@@ -12,7 +12,7 @@ from pathlib import Path
 import streamlit as st
 
 from core import engine, vectorstore
-from core.llm import LLMConfig
+from core.llm import LLMConfig, ollama_chat_models
 from core.pdf_utils import load_pdf, render_page_png
 from core.ui import CSS, landing_bottom, landing_top
 
@@ -315,14 +315,7 @@ def model_settings():
         prov = opts[choice]
         if prov == "ollama":
             base = st.text_input("Ollama Host URL", value=cfg.base_url or "http://localhost:11434", key="set_base_ollama")
-            installed = []
-            try:
-                import requests
-                r = requests.get(f"{base.rstrip('/')}/api/tags", timeout=1.5)
-                if r.status_code == 200:
-                    installed = [m.get("name") for m in r.json().get("models", []) if m.get("name")]
-            except Exception:
-                pass
+            installed = ollama_chat_models(base)  # cached; embedding-only models are left out
             if installed:
                 cur_m = cfg.model if prov in (cfg.provider, "llama") and cfg.model in installed else installed[0]
                 idx = installed.index(cur_m) if cur_m in installed else 0
