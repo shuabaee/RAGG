@@ -93,24 +93,49 @@ def has_paper(key: str, paper_id: str, chunks: list[Chunk]) -> bool:
         return False
 
 
-def add(key: str, chunks: list[Chunk], vectors: np.ndarray) -> None:
+def _upsert(col, chunks: list[Chunk], vectors: np.ndarray) -> None:
+    for i in range(0, len(chunks), 1000):
+        part = chunks[i : i + 1000]
+        col.upsert(
+            ids=[c.chunk_id for c in part],
+            embeddings=np.asarray(vectors[i : i + len(part)], dtype=np.float32).tolist(),
+            documents=[c.text for c in part],
+            metadatas=[
+                {"paper_id": c.paper_id, "page": c.page, "section": c.section, "text_hash": _text_hash(c.text)}
+                for c in part
+            ],
+        )
+
+
+def _stored_dim(col) -> int | None:
+    try:
+        got = col.get(limit=1, include=["embeddings"])
+        embs = got.get("embeddings")
+        return len(embs[0]) if embs is not None and len(embs) else None
+    except Exception:
+        return None
+
+
+def add(key: str, chunks: list[Chunk], vectors: np.ndarray) -> bool:
+    """Store vectors; True on success. If the model behind this key changed vector size,
+    the old (now unusable) collection is replaced."""
     col = _collection(key, create=True)
     if col is None or not chunks:
-        return
+        return False
     try:
-        for i in range(0, len(chunks), 1000):
-            part = chunks[i : i + 1000]
-            col.upsert(
-                ids=[c.chunk_id for c in part],
-                embeddings=np.asarray(vectors[i : i + len(part)], dtype=np.float32).tolist(),
-                documents=[c.text for c in part],
-                metadatas=[
-                    {"paper_id": c.paper_id, "page": c.page, "section": c.section, "text_hash": _text_hash(c.text)}
-                    for c in part
-                ],
-            )
+        _upsert(col, chunks, vectors)
+        return True
     except Exception:
         pass
+    dim = _stored_dim(col)
+    if dim is None or dim == np.asarray(vectors).shape[1]:
+        return False
+    try:
+        _get_client().delete_collection(_name(key))
+        _upsert(_collection(key, create=True), chunks, vectors)
+        return True
+    except Exception:
+        return False
 
 
 def query(key: str, qvec: np.ndarray, paper_ids: list[str], n: int = 40) -> dict[str, float]:

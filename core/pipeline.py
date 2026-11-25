@@ -6,8 +6,6 @@ from __future__ import annotations
 import html
 import re
 
-import numpy as np
-
 from . import llm as llm_mod
 from . import reranker, vectorstore
 from .chunker import best_sentences, chunk_paper
@@ -28,6 +26,11 @@ from .prompts import EVIDENCE_MODE, INSUFFICIENT, SYSTEM_PROMPT, TASKS
 from .retrieval import GENERIC, search, tokenize
 from .router import Route, route
 from .verifier import _cite_html, _cite_plain, verify_quote
+
+
+def embed_key(cfg: llm_mod.LLMConfig) -> str:
+    """Identifies the embedding space: provider, model and server (vectors from different ones never mix)."""
+    return f"{cfg.provider}:{cfg.resolved_embed()}@{cfg.resolved_base_url()}"
 
 
 class RAGPipeline:
@@ -53,14 +56,14 @@ class RAGPipeline:
         """
         if not cfg.enabled or not cfg.resolved_embed():
             return None
-        key = f"{cfg.provider}:{cfg.resolved_embed()}"
+        key = embed_key(cfg)
         use_store = vectorstore.available()
         for pid in ids:
             ix = indexes.get(pid)
             if ix is None or ix.emb_key == key or not ix.chunks:
                 continue
             if use_store and vectorstore.has_paper(key, pid, ix.chunks):
-                ix.emb, ix.emb_key = None, key
+                ix.emb, ix.emb_key, ix.in_store = None, key, True
                 continue
             try:
                 vecs = llm_mod.embed(cfg, [c.text for c in ix.chunks])
@@ -68,9 +71,8 @@ class RAGPipeline:
                 return f"Semantic embeddings unavailable ({e}). Using keyword search only."
             if vecs is None:
                 continue
-            if use_store:
-                vectorstore.add(key, ix.chunks, vecs)
-            ix.emb, ix.emb_key = vecs, key
+            ix.in_store = vectorstore.add(key, ix.chunks, vecs) if use_store else False
+            ix.emb, ix.emb_key = vecs, key  # in-memory copy: fallback if the store fails later
         return None
 
     def answer(
@@ -161,34 +163,34 @@ class RAGPipeline:
             hits = [Hit(c, 1.0, 1.0, None, 1) for c in selected]
         else:
             all_chunks: list[Chunk] = []
-            all_emb = []
-            use_dense = True
-            key = f"{active_cfg.provider}:{active_cfg.resolved_embed()}" if active_cfg.enabled else ""
-            stored_ids: list[str] = []
+            key = embed_key(active_cfg) if active_cfg.enabled and active_cfg.resolved_embed() else ""
+            store_ids: list[str] = []  # papers whose vectors are in ChromaDB
+            mem: list = []  # papers with in-memory vectors only
             for p in target_papers:
                 ix = indexes.get(p.paper_id)
                 if not ix:
                     continue
                 all_chunks.extend(ix.chunks)
-                if key and ix.emb_key == key:
-                    stored_ids.append(p.paper_id)
-                if ix.emb is not None and len(ix.emb) == len(ix.chunks):
-                    all_emb.append(ix.emb)
-                else:
-                    use_dense = False
-            dense_scores = None
-            emb = None
-            qv = _qvec() if stored_ids else None
+                if not key or ix.emb_key != key:
+                    continue
+                if ix.in_store and vectorstore.available():
+                    store_ids.append(p.paper_id)
+                elif ix.emb is not None and len(ix.emb) == len(ix.chunks):
+                    mem.append(ix)
+            dense_scores: dict[str, float] = {}
+            qv = _qvec() if (store_ids or mem) else None
             if qv is not None:
-                if vectorstore.available():  # dense retrieval through ChromaDB
-                    dense_scores = vectorstore.query(key, qv, stored_ids, n=40) or None
-                if dense_scores is None and use_dense and all_emb:  # in-memory fallback
-                    emb = np.vstack(all_emb)
+                if store_ids:  # dense retrieval through ChromaDB
+                    found = vectorstore.query(key, qv, store_ids, n=40)
+                    if not found:
+                        notice = f"{notice} Vector store unavailable; keyword search only for some papers.".strip()
+                    dense_scores.update(found)
+                for ix in mem:  # papers that could not be stored: score from memory
+                    dense_scores.update(zip((c.chunk_id for c in ix.chunks), (ix.emb @ qv).tolist()))
             want = 6
             k = 20 if active_cfg.rerank else want
             hits = search(
-                all_chunks, q_search, k=k, embeddings=emb, query_vec=qv if emb is not None else None,
-                section_boost=SECTION_BOOST.get(intent), dense_scores=dense_scores,
+                all_chunks, q_search, k=k, section_boost=SECTION_BOOST.get(intent), dense_scores=dense_scores or None,
             )
             if active_cfg.rerank and hits:
                 hits, msg = reranker.rerank(r.search_query, hits, want)
@@ -226,9 +228,9 @@ class RAGPipeline:
                 rep.notice = notice
                 return rep
             except llm_mod.LLMError as e:
-                notice = f"The AI model could not answer ({e}). Showing extractive results instead."
+                notice = f"{notice} The AI model could not answer ({e}). Showing extractive results instead.".strip()
             except Exception as e:  # network etc.
-                notice = f"The AI model could not be reached ({type(e).__name__}). Showing extractive results instead."
+                notice = f"{notice} The AI model could not be reached ({type(e).__name__}). Showing extractive results instead.".strip()
 
         rep = self._extractive(question, r, selected, hits, target_papers, papers_by_id, indexes)
         rep.passages = passages

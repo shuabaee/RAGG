@@ -33,7 +33,8 @@ class Hit:
 class PaperIndex:
     chunks: list[Chunk]
     emb: np.ndarray | None = None
-    emb_key: str = ""  # provider:model used for emb
+    emb_key: str = ""  # embed_key() the vectors were made with
+    in_store: bool = False  # vectors confirmed in the persistent vector store
 
 
 @dataclass

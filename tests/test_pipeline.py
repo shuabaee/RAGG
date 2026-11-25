@@ -119,3 +119,65 @@ def test_answer_queries_chroma(corpus, store, monkeypatch):
     ix = _indexes(corpus)
     pipeline.answer(QUESTION, corpus, ix, [], [], cfg)
     assert set(seen["ids"]) <= {p.paper_id for p in corpus} and seen["ids"]
+
+
+def _unit_embed(cfg, texts, is_query=False):
+    rng = np.random.default_rng(abs(hash(tuple(texts))) % 2**32)
+    v = rng.normal(size=(len(texts), 8)).astype(np.float32)
+    return v / np.linalg.norm(v, axis=1, keepdims=True)
+
+
+def _spy_dense(monkeypatch):
+    seen = {}
+    real = pipeline.search
+
+    def spy(*a, **kw):
+        seen["dense"] = kw.get("dense_scores")
+        return real(*a, **kw)
+
+    monkeypatch.setattr(pipeline, "search", spy)
+    return seen
+
+
+def _cfg():
+    return LLMConfig(provider="ollama", model="fake-chat", embed_model="fake-embed", rerank=False)
+
+
+def _no_chat(monkeypatch):
+    monkeypatch.setattr(llm_mod, "chat", lambda *a, **k: (_ for _ in ()).throw(llm_mod.LLMError("offline")))
+
+
+def test_embed_key_includes_base_url():
+    a = LLMConfig(provider="openai", api_key="k", embed_model="text-embedding-3-small")
+    b = LLMConfig(provider="openai", api_key="k", embed_model="text-embedding-3-small", base_url="https://api.groq.com/openai/v1")
+    assert pipeline.embed_key(a) != pipeline.embed_key(b)
+
+
+def test_chroma_query_failure_gives_notice(corpus, store, monkeypatch):
+    monkeypatch.setattr(llm_mod, "embed", _unit_embed)
+    _no_chat(monkeypatch)
+    ids = [p.paper_id for p in corpus]
+    pipeline.ensure_embeddings(_cfg(), _indexes(corpus), ids)
+    ix = _indexes(corpus)  # restart: vectors only on disk
+    pipeline.ensure_embeddings(_cfg(), ix, ids)
+    monkeypatch.setattr(pipeline.vectorstore, "query", lambda *a, **k: {})
+    rep = pipeline.answer(QUESTION, corpus, ix, [], [], _cfg())
+    assert "Vector store unavailable" in rep.notice
+
+
+def test_paper_not_stored_still_gets_dense_scores(corpus, store, monkeypatch):
+    monkeypatch.setattr(llm_mod, "embed", _unit_embed)
+    _no_chat(monkeypatch)
+    a, b = corpus[0], corpus[1]
+    real_add = pipeline.vectorstore.add
+    monkeypatch.setattr(
+        pipeline.vectorstore, "add",
+        lambda key, chunks, vecs: False if chunks and chunks[0].paper_id == b.paper_id else real_add(key, chunks, vecs),
+    )
+    ix = _indexes(corpus)
+    pipeline.ensure_embeddings(_cfg(), ix, [a.paper_id, b.paper_id])
+    assert ix[a.paper_id].in_store and not ix[b.paper_id].in_store and ix[b.paper_id].emb is not None
+    seen = _spy_dense(monkeypatch)
+    pipeline.answer(QUESTION, corpus, ix, [], [], _cfg())
+    pids = {cid.rsplit("-", 1)[0] for cid in seen["dense"]}
+    assert pids == {a.paper_id, b.paper_id}

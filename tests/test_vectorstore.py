@@ -55,3 +55,17 @@ def test_separate_collections_per_key(store):
 
 def test_query_unknown_key_is_empty(store):
     assert store.query("none:x", _unit(3, 0), ["p1"]) == {}
+
+
+def test_add_reports_success(store):
+    chunks = make_chunks("p1", TEXTS)
+    assert store.add("ollama:m", chunks, np.stack([_unit(3, i) for i in range(3)])) is True
+
+
+def test_dimension_change_same_key_recovers(store):
+    chunks = make_chunks("p1", TEXTS)
+    store.add("ollama:m", chunks, np.stack([_unit(3, i) for i in range(3)]))
+    # the model behind the same name now returns 5-d vectors
+    assert store.add("ollama:m", chunks, np.stack([_unit(5, i) for i in range(3)])) is True
+    res = store.query("ollama:m", _unit(5, 2), ["p1"])
+    assert max(res, key=res.get) == "p1-3"
