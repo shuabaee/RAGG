@@ -64,6 +64,7 @@ def init_state():
             base_url=_secret("OLLAMA_HOST") if provider in ("ollama", "llama") else _secret("OPENAI_BASE_URL"),
             embed_model=_secret("RAGG_EMBED_MODEL"),
             rerank=_secret("RAGG_RERANK", "1").strip().lower() not in ("0", "false", "off", "no"),
+            think=_secret("RAGG_THINK", "0").strip().lower() in ("1", "true", "on", "yes"),
         )
 
 
@@ -144,7 +145,7 @@ def render_library():
 
         # notebooks
         st.markdown("<div class='lib-label'>Notebooks</div>", unsafe_allow_html=True)
-        with st.popover("＋  New notebook"):
+        with st.popover("New notebook", icon=":material/add:"):
             name = st.text_input("Notebook name", key="nb_name", placeholder="e.g. Thesis – CNN studies")
             if st.button("Create", key="nb_create", type="primary"):
                 nm = (name or "").strip()
@@ -152,27 +153,38 @@ def render_library():
                     S.notebooks.append(nm)
                     S.active_nb = nm
                     st.rerun()
-        for ni, nb in enumerate(["All papers"] + S.notebooks):
-            count = len(papers_in_nb(nb))
-            on = nb == S.active_nb
-            if st.button(f"{'📂' if on else '📁'}  {nb}  ·  {count}", key=f"{'nbon' if on else 'nb'}_{ni}"):
-                S.active_nb = nb
-                st.rerun()
+        names = ["All papers"] + S.notebooks
+        nb_box = st.container(height=200, border=False, key="nb_list") if len(names) > 6 else st.container(key="nb_list")
+        with nb_box:
+            for ni, nb in enumerate(names):
+                count = len(papers_in_nb(nb))
+                on = nb == S.active_nb
+                if st.button(
+                    f"{nb} · {count}",
+                    key=f"{'nbrowon' if on else 'nbrow'}_{ni}",
+                    icon=":material/folder_open:" if on else ":material/folder:",
+                    help=nb if len(nb) > 22 else None,
+                    width="stretch",
+                ):
+                    S.active_nb = nb
+                    st.rerun()
 
         # papers
         st.markdown("<div class='lib-label'>Research Papers</div>", unsafe_allow_html=True)
-        with st.popover("＋  New Paper"):
+        with st.popover("New paper", icon=":material/add:"):
             uploader("upA")
         if S.get("upload_report"):
             for m in S.upload_report:
                 st.caption(m)
             S.upload_report = None
 
+        st.text_input("Search papers", key="paper_search", placeholder="Search by title or author…",
+                      label_visibility="collapsed", icon=":material/search:")
         query = S.get("paper_search", "") or ""
         listed = [p for p in papers_in_nb(S.active_nb) if query.lower() in (p.display_title + " " + p.authors + " " + p.filename).lower()]
         with st.container(height=330, border=False, key="paper_list"):
             if not listed:
-                st.caption("No papers here yet. Use **＋ New Paper** to upload PDFs, or try the demo." if not query else "No title matches your search.")
+                st.caption("No papers here yet. Use **New paper** to upload PDFs, or try the demo." if not query else "No title matches your search.")
                 if not S.papers:
                     if st.button("Load 2 demo papers", key="demo_btn"):
                         load_demo()
@@ -182,8 +194,10 @@ def render_library():
                 with st.container(key=f"pcard_{'on_' if on else ''}{p.paper_id}"):
                     c1, c2 = st.columns([0.86, 0.14], vertical_alignment="top")
                     with c1:
-                        title = p.display_title if len(p.display_title) <= 80 else p.display_title[:77] + "…"
-                        if st.button(title, key=f"pick_{p.paper_id}", help="Click to add or remove this paper from the search scope"):
+                        if st.button(
+                            p.display_title, key=f"pick_{p.paper_id}",
+                            help=f"{p.display_title}\n\nClick to {'remove this paper from' if on else 'add this paper to'} the search scope.",
+                        ):
                             if on:
                                 S.selected.remove(p.paper_id)
                             else:
@@ -212,13 +226,6 @@ def render_library():
                                     S.selected.remove(p.paper_id)
                                 st.rerun()
 
-        c1, c2 = st.columns([0.82, 0.18], vertical_alignment="center")
-        with c1:
-            st.text_input("Search", key="paper_search", placeholder="Search a Research Title...", label_visibility="collapsed")
-        with c2:
-            with st.popover("＋"):
-                uploader("upB")
-
 
 # ----------------------------------------------------------------------------- right: chat
 BADGE = {
@@ -227,6 +234,8 @@ BADGE = {
     "retrieved": "<span class='b-ret'>Retrieved passage (verbatim)</span>",
 }
 SEC = engine._SEC_NAMES
+AVATAR_USER = ":material/person:"
+AVATAR_BOT = ":material/auto_stories:"
 
 
 def _page_png(pid: str, page: int, quote: str):
@@ -258,11 +267,14 @@ def render_evidence(items: list[dict], mi: int, label: str, kind: str):
 
 
 def render_message(mi: int, m: dict):
-    avatar = "🧑‍🎓" if m["role"] == "user" else "📚"
+    avatar = AVATAR_USER if m["role"] == "user" else AVATAR_BOT
     with st.chat_message(m["role"], avatar=avatar):
         if m["role"] == "user":
             st.markdown(m["content"])
             return
+        if m.get("reasoning"):  # collapsed by default; click to read how the model got there
+            with st.expander("Thought process", icon=":material/psychology:"):
+                st.markdown(f"<div class='reasoning'>{html.escape(m['reasoning'])}</div>", unsafe_allow_html=True)
         st.markdown(m["content"], unsafe_allow_html=True)
         if m.get("notice"):
             st.caption("⚠️ " + m["notice"])
@@ -297,13 +309,14 @@ def run_question(q: str):
             "passages": [asdict(e) for e in rep.passages],
             "notice": rep.notice,
             "mode": rep.mode,
+            "reasoning": rep.reasoning,
         }
     )
 
 
 def model_settings():
     cfg: LLMConfig = S.llm
-    with st.popover("⚙ Model settings"):
+    with st.popover("Model settings", icon=":material/tune:"):
         st.caption("Keys entered here stay in this browser session only. For a deployed app, put the key in Streamlit **Secrets**.")
         opts = {
             "Ollama (local)": "ollama",
@@ -338,6 +351,14 @@ def model_settings():
         else:
             key, model, base = "", "", ""
 
+        think = st.toggle(
+            "Let the model think first",
+            value=cfg.think,
+            key="set_think",
+            disabled=prov == "none",
+            help="Reasoning models (e.g. qwen3, deepseek-r1) reason before answering. Slower; "
+                 "their reasoning appears under “Thought process”. Ignored by models that can’t do it.",
+        )
         rerank = st.toggle(
             "Rerank results (FlashRank)",
             value=cfg.rerank,
@@ -351,23 +372,25 @@ def model_settings():
         )
 
         if st.button("Save settings", key="set_save", type="primary"):
-            S.llm = LLMConfig(provider=prov, api_key=key.strip(), model=model.strip(), base_url=base.strip(), embed_model=cfg.embed_model, rerank=rerank)
+            S.llm = LLMConfig(provider=prov, api_key=key.strip(), model=model.strip(), base_url=base.strip(), embed_model=cfg.embed_model, rerank=rerank, think=think)
             for ix in S.indexes.values():  # embeddings must be rebuilt for a new provider
-                ix.emb, ix.emb_key = None, ""
+                ix.emb, ix.emb_key, ix.in_store = None, "", False
             st.rerun()
 
 
 def render_chat():
     with st.container(key="chat_panel"):
-        h1, h2, h3 = st.columns([0.52, 0.28, 0.2], vertical_alignment="center")
-        with h1:
-            st.markdown(f"<div class='scope-chip'>🧠 <b>{html.escape(S.llm.label())}</b></div>", unsafe_allow_html=True)
-        with h2:
-            model_settings()
-        with h3:
-            if st.button("Clear chat", key="clear_chat", disabled=not S.messages):
-                S.messages, S.focus_ids = [], []
-                st.rerun()
+        with st.container(key="chat_head"):
+            h1, h2, h3 = st.columns([0.6, 0.22, 0.18], vertical_alignment="center")
+            with h1:
+                dot = "" if S.llm.enabled else " off"
+                st.markdown(f"<div class='model-chip'><span class='dot{dot}'></span>{html.escape(S.llm.label())}</div>", unsafe_allow_html=True)
+            with h2:
+                model_settings()
+            with h3:
+                if st.button("Clear chat", key="clear_chat", disabled=not S.messages, icon=":material/delete_sweep:"):
+                    S.messages, S.focus_ids = [], []
+                    st.rerun()
 
         papers, scope_txt = scope_papers()
         box = st.container(height=540, border=False, key="chat_box")
@@ -383,16 +406,16 @@ def render_chat():
                     cols = st.columns(2)
                     for i, sq in enumerate(sugg):
                         with cols[i % 2]:
-                            if st.button(sq, key=f"chip_{i}"):
+                            if st.button(sq, key=f"chip_{i}", width="stretch"):
                                 S.pending_q = sq
                                 st.rerun()
             for mi, m in enumerate(S.messages):
                 render_message(mi, m)
             if S.pending_q:
                 _q, S.pending_q = S.pending_q, None
-                with st.chat_message("user", avatar="🧑‍🎓"):
+                with st.chat_message("user", avatar=AVATAR_USER):
                     st.markdown(_q)
-                with st.chat_message("assistant", avatar="📚"):
+                with st.chat_message("assistant", avatar=AVATAR_BOT):
                     with st.spinner("Ragg is reading your sources…"):
                         run_question(_q)
                 st.rerun()

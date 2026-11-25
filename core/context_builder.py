@@ -92,8 +92,8 @@ def scope_reply(papers: list[Paper], lead: str) -> Reply:
         )
     else:
         body = (
-            f"{lead}\n\nThere are **no papers in scope yet**. Add a text-based research PDF with **＋ New Paper** "
-            f"(or the **＋** button beside the search box), then ask me about it.\n\n{SCOPE_CAN}"
+            f"{lead}\n\nThere are **no papers in scope yet**. Add a text-based research PDF with **New paper** "
+            f"in the library on the left, then ask me about it.\n\n{SCOPE_CAN}"
         )
     return Reply(content=body, plain=re.sub(r"\*\*", "", body), mode="scope")
 

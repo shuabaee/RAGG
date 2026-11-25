@@ -92,37 +92,86 @@ html {{ scroll-behavior:smooth; }}
 .lib-label {{ display:flex; align-items:center; gap:10px; font-size:13px; font-weight:600; color:#111; margin:14px 0 6px; }}
 .lib-label::after {{ content:""; flex:1; border-top:1.5px solid #cfcfcf; }}
 .st-key-library .stButton button, .st-key-library [data-testid="stPopover"] button {{ width:100%; }}
-.st-key-library [data-testid="stPopover"] > div > button, .st-key-library [data-testid="stPopoverButton"] {{
-  background:transparent; border:none; box-shadow:none; justify-content:flex-start; padding:4px 6px; min-height:0; font-weight:600;
+.st-key-library [data-testid="stPopoverButton"] {{
+  background:transparent; border:none; box-shadow:none; justify-content:flex-start; padding:4px 6px; min-height:0;
+  font-weight:600; font-size:13px; color:#222;
 }}
-[class*="st-key-nb_"] button {{ background:transparent; border:none; justify-content:flex-start; text-align:left; padding:5px 10px; min-height:0; border-radius:10px; font-size:13px; }}
-[class*="st-key-nb_"] button:hover {{ background:#f4f4f4; }}
-[class*="st-key-nbon_"] button {{ background:#111 !important; color:#fff !important; }}
-[class*="st-key-nbon_"] button p {{ color:#fff !important; }}
+.st-key-library [data-testid="stPopoverButton"]:hover {{ color:var(--red); }}
+.st-key-library [data-testid="stTextInput"] [data-baseweb="input"] {{ border-radius:10px; }}
 
-[class*="st-key-pcard_"] {{ border-radius:14px; padding:8px 8px 6px 12px !important; border-bottom:1px solid var(--line); gap:0 !important; }}
+/* notebooks: full-width rows, one line, ellipsis (full name in the tooltip) */
+.st-key-nb_list {{ gap:2px !important; }}
+[class*="st-key-nbrow"] button {{
+  background:transparent; border:none; box-shadow:none; justify-content:flex-start; text-align:left;
+  padding:6px 10px; min-height:34px; border-radius:10px; font-size:13px; color:#222;
+}}
+[class*="st-key-nbrow"] button * {{ min-width:0; }}
+[class*="st-key-nbrow"] button > div {{ width:100%; justify-content:flex-start; overflow:hidden; }}
+[class*="st-key-nbrow"] button [data-testid="stMarkdownContainer"] {{ overflow:hidden; }}
+[class*="st-key-nbrow"] button p {{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; text-align:left; font-size:13px; }}
+[class*="st-key-nbrow"] [data-testid="stIconMaterial"] {{ color:#8a8a8a; flex:none; }}
+[class*="st-key-nbrow_"] button:hover {{ background:#f2f2f2; color:#111; }}
+[class*="st-key-nbrowon_"] button {{ background:#111 !important; color:#fff !important; }}
+[class*="st-key-nbrowon_"] button p, [class*="st-key-nbrowon_"] [data-testid="stIconMaterial"] {{ color:#fff !important; }}
+
+/* paper cards */
+[class*="st-key-pcard_"] {{ border-radius:14px; padding:10px 4px 10px 12px !important; gap:0 !important; border-bottom:1px solid var(--line); transition:background .15s ease-out; }}
+[class*="st-key-pcard_"]:not([class*="st-key-pcard_on_"]):hover {{ background:#f6f6f6; }}
 [class*="st-key-pcard_on_"] {{ background:#111; box-shadow:0 8px 18px rgba(0,0,0,.18); border-bottom:none; margin:4px 0; }}
+[class*="st-key-pcard_"] [data-testid="stMarkdownContainer"] {{ margin-bottom:0 !important; }}
+[class*="st-key-pcard_"] [data-testid="stHorizontalBlock"] {{ flex-wrap:nowrap !important; gap:4px !important; }}
+[class*="st-key-pcard_"] [data-testid="stColumn"] {{ min-width:0 !important; }}
+[class*="st-key-pcard_"] [data-testid="stColumn"]:last-child {{ flex:0 0 28px !important; width:28px !important; }}
 [class*="st-key-pcard_"] .stButton button {{
   background:transparent !important; border:none !important; box-shadow:none !important; padding:0 !important; min-height:0 !important;
-  justify-content:flex-start; text-align:left;
+  height:auto; align-items:flex-start; justify-content:flex-start; text-align:left; width:100%;
 }}
-[class*="st-key-pcard_"] .stButton button p {{ font-weight:700; font-size:13px; line-height:1.25; text-align:left; }}
+[class*="st-key-pcard_"] .stButton button * {{ min-width:0; }}
+[class*="st-key-pcard_"] .stButton button p {{
+  font-weight:700; font-size:13px; line-height:1.3; text-align:left; white-space:normal;
+  display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+}}
 [class*="st-key-pcard_on_"] .stButton button p, [class*="st-key-pcard_on_"] .pc-meta, [class*="st-key-pcard_on_"] [data-testid="stPopover"] button p {{ color:#fff !important; }}
 [class*="st-key-pcard_"] [data-testid="stPopover"] button {{ background:transparent; border:none; box-shadow:none; min-height:0; padding:0 4px; }}
-.pc-meta {{ font-size:11px; font-weight:600; color:#555; margin:2px 0 2px; }}
-.pc-warn {{ font-size:11px; color:#b06000; }}
+.pc-meta {{ font-size:11.5px; font-weight:600; color:#555; margin:4px 0 0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+.pc-warn {{ font-size:11px; color:#b06000; margin-top:2px; }}
 
 .st-key-chat_panel {{ background:#fafafa; border:1px solid #efefef; border-radius:24px; padding:16px 16px 12px !important; }}
 .st-key-chat_panel [data-testid="stVerticalBlockBorderWrapper"] {{ border:none !important; }}
-.empty {{ text-align:center; padding:120px 10px 30px; }}
-.empty .big {{ font-size:30px; font-weight:500; color:#c4c4c4; letter-spacing:-.5px; }}
-.empty .small {{ font-size:13px; color:#c4c4c4; }}
-.st-key-chips button, [class*="st-key-chip_"] button {{ border-radius:999px; border:1px solid #ddd; background:#fff; font-size:12.5px; padding:4px 12px; min-height:0; }}
-.st-key-chips button:hover, [class*="st-key-chip_"] button:hover {{ border-color:var(--red); color:var(--red); }}
+.st-key-chat_head [data-testid="stHorizontalBlock"] {{ flex-wrap:nowrap !important; gap:8px !important; }}
+.st-key-chat_head [data-testid="stColumn"] {{ min-width:0 !important; }}
+.st-key-chat_head [data-testid="stColumn"]:not(:first-child) {{ flex:0 0 auto !important; width:auto !important; }}
+.st-key-chat_head [data-testid="stPopoverButton"], .st-key-clear_chat button {{
+  border-radius:999px; font-size:12.5px; min-height:32px; padding:4px 12px; background:#fff; border:1px solid #e3e3e3; white-space:nowrap;
+}}
+.model-chip {{
+  display:inline-flex; align-items:center; gap:8px; max-width:100%; font-size:12.5px; font-weight:600; color:#111;
+  background:#fff; border:1px solid #e6e6e6; border-radius:999px; padding:5px 12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}}
+.model-chip .dot {{ width:7px; height:7px; border-radius:50%; background:#2e9d5b; flex:none; }}
+.model-chip .dot.off {{ background:#b5b5b5; }}
+.empty {{ text-align:center; padding:110px 10px 26px; }}
+.empty .big {{ font-size:30px; font-weight:600; color:#5f5f5f; letter-spacing:-.02em; }}
+.empty .small {{ font-size:13.5px; color:#6b6b6b; margin-top:4px; }}
+[class*="st-key-chip_"] button {{ border-radius:16px; border:1px solid #ddd; background:#fff; padding:7px 14px; min-height:0; height:auto; width:100%; justify-content:flex-start; }}
+[class*="st-key-chip_"] button > div {{ width:100%; justify-content:flex-start; }}
+[class*="st-key-chip_"] button p {{ font-size:12.5px; white-space:normal; text-align:left; line-height:1.35; }}
+[class*="st-key-chip_"] button:hover {{ border-color:var(--red); color:var(--red); }}
 
-.st-key-ask_bar [data-testid="stForm"] {{ border:1px solid #e6e6e6; border-radius:999px; background:#fff; padding:6px 8px 6px 18px; box-shadow:0 4px 18px rgba(0,0,0,.05); }}
+[data-testid="InputInstructions"] {{ display:none !important; }}
+.st-key-ask_bar [data-testid="stForm"] {{
+  border:1px solid #e6e6e6; border-radius:999px; background:#fff; padding:6px 8px 6px 18px; box-shadow:0 4px 18px rgba(0,0,0,.05);
+  transition:border-color .15s ease-out, box-shadow .15s ease-out;
+}}
+.st-key-ask_bar [data-testid="stForm"]:focus-within {{ border-color:#bdbdbd; box-shadow:0 4px 18px rgba(0,0,0,.07), 0 0 0 3px rgba(146,12,0,.10); }}
+.st-key-ask_bar [data-testid="stHorizontalBlock"] {{ flex-wrap:nowrap !important; gap:8px !important; }}
+.st-key-ask_bar [data-testid="stColumn"] {{ min-width:0 !important; }}
+.st-key-ask_bar [data-testid="stColumn"]:last-child {{ flex:0 0 auto !important; width:auto !important; }}
 .st-key-ask_bar [data-testid="stTextInput"] input {{ border:none !important; background:transparent !important; box-shadow:none !important; font-size:14px; }}
-.st-key-ask_bar [data-testid="stTextInput"] > div, .st-key-ask_bar [data-baseweb="input"], .st-key-ask_bar [data-baseweb="base-input"] {{ border:none !important; background:transparent !important; }}
+.st-key-ask_bar [data-testid="stTextInput"] > div, .st-key-ask_bar [data-baseweb="input"], .st-key-ask_bar [data-baseweb="base-input"],
+.st-key-ask_bar [data-testid="stTextInputRootElement"] {{
+  border:none !important; background:transparent !important; box-shadow:none !important;
+}}
 button[kind^="primary"], [data-testid^="stBaseButton-primary"] {{ background:#111 !important; border:none !important; color:#fff !important; border-radius:999px !important; font-weight:600 !important; }}
 button[kind^="primary"]:hover, [data-testid^="stBaseButton-primary"]:hover {{ background:var(--red) !important; }}
 .scope-chip {{ font-size:12px; color:#555; margin:2px 4px 8px; }}
@@ -130,10 +179,15 @@ button[kind^="primary"]:hover, [data-testid^="stBaseButton-primary"]:hover {{ ba
 
 /* chat content */
 .cite {{ background:#fbe9e7; color:var(--red); border-radius:6px; padding:1px 7px; font-size:.8em; font-weight:700; white-space:nowrap; }}
+.reasoning {{ font-size:13px; line-height:1.6; color:#5a5a5a; white-space:pre-wrap; max-height:320px; overflow:auto; border-left:1px solid #dcdcdc; padding-left:12px; }}
+[data-testid="stExpander"]:has(.reasoning) details {{ border:none !important; background:transparent !important; }}
+[data-testid="stExpander"]:has(.reasoning) summary {{ padding:2px 0 !important; min-height:0; }}
+[data-testid="stExpander"]:has(.reasoning) summary p, [data-testid="stExpander"]:has(.reasoning) summary [data-testid="stIconMaterial"] {{ color:#6b6b6b; font-size:13px; }}
+[data-testid="stExpander"]:has(.reasoning) summary:hover p {{ color:#111; }}
 .unver {{ background:#fff3d6; color:#8a5a00; border-radius:6px; padding:1px 7px; font-size:.76em; font-weight:600; }}
 .sec-tag {{ color:#888; font-size:.78em; }}
 .quote {{ font-style:italic; }}
-.ev-card {{ background:#fff; border:1px solid #eee; border-left:4px solid var(--red); border-radius:12px; padding:10px 14px; margin:6px 0; }}
+.ev-card {{ background:#fff; border:1px solid #ececec; border-radius:12px; padding:10px 14px; margin:6px 0; box-shadow:0 2px 8px rgba(0,0,0,.03); }}
 .ev-head {{ font-size:12px; font-weight:700; color:#111; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }}
 .ev-q {{ font-size:14px; line-height:1.5; margin-top:6px; color:#222; }}
 .b-ok {{ background:#e7f6ec; color:#17703a; border-radius:6px; padding:1px 7px; font-size:11px; }}
@@ -153,6 +207,18 @@ button[kind^="primary"]:hover, [data-testid^="stBaseButton-primary"]:hover {{ ba
 .foot a {{ display:block; color:#fff !important; text-decoration:none; font-size:12px; margin:5px 0; opacity:.92; }}
 .foot .bottom {{ display:flex; justify-content:space-between; max-width:1300px; margin:34px auto 0; font-size:11px; }}
 .foot .bottom span a {{ display:inline; margin-left:18px; font-size:11px; }}
+
+::selection {{ background:rgba(146,12,0,.16); }}
+
+@media (max-width: 640px) {{
+  .st-key-model_wrap {{ padding:14px !important; border-radius:22px; margin-bottom:60px !important; }}
+  .st-key-chat_panel {{ padding:12px 10px 10px !important; border-radius:18px; }}
+  .cite {{ white-space:normal; overflow-wrap:anywhere; }}
+  .empty {{ padding:60px 6px 20px; }}
+  .empty .big {{ font-size:24px; }}
+  .st-key-chat_head [data-testid="stPopoverButton"] p, .st-key-clear_chat button p {{ display:none; }}
+  .st-key-ask_bar [data-testid="stForm"] {{ padding-left:14px; }}
+}}
 
 @media (max-width: 900px) {{
   .how {{ grid-template-columns:1fr; }}
