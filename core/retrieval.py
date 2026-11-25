@@ -82,7 +82,13 @@ def search(
     embeddings: np.ndarray | None = None,
     query_vec: np.ndarray | None = None,
     section_boost: dict[str, float] | None = None,
+    dense_scores: dict[str, float] | None = None,
 ) -> list[Hit]:
+    """Hybrid search: BM25 + dense similarity fused with reciprocal-rank fusion.
+
+    Dense scores come either from ``dense_scores`` (chunk_id -> cosine, e.g. from ChromaDB; chunks
+    missing from it get no dense term) or from the in-memory ``embeddings`` @ ``query_vec``.
+    """
     if not chunks:
         return []
     topical = set(tokenize(query, GENERIC))
@@ -93,8 +99,18 @@ def search(
     rank_lex[order_lex] = np.arange(len(chunks))
 
     dense = None
-    if embeddings is not None and query_vec is not None and len(embeddings) == len(chunks):
+    has_d = None
+    if dense_scores:
+        dense = np.array([dense_scores.get(c.chunk_id, np.nan) for c in chunks], dtype=float)
+        has_d = ~np.isnan(dense)
+        order_d = np.argsort(-np.where(has_d, dense, -np.inf))
+        rank_d = np.empty(len(chunks), dtype=int)
+        rank_d[order_d] = np.arange(len(chunks))
+        if not has_d.any():
+            dense = has_d = None
+    elif embeddings is not None and query_vec is not None and len(embeddings) == len(chunks):
         dense = embeddings @ query_vec
+        has_d = np.ones(len(chunks), dtype=bool)
         order_d = np.argsort(-dense)
         rank_d = np.empty(len(chunks), dtype=int)
         rank_d[order_d] = np.arange(len(chunks))
@@ -102,7 +118,7 @@ def search(
     fused = np.zeros(len(chunks))
     for i, c in enumerate(chunks):
         s = (1 / (60 + rank_lex[i])) if bm[i] > 0 else 0.0
-        if dense is not None:
+        if dense is not None and has_d[i]:
             s += 1 / (60 + rank_d[i])
         if c.section == "references":
             s *= 0.35
@@ -117,7 +133,7 @@ def search(
             continue
         c = chunks[i]
         ov = len(topical & set(c.tokens))
-        hits.append(Hit(c, float(fused[i]), float(bm[i]), None if dense is None else float(dense[i]), ov))
+        hits.append(Hit(c, float(fused[i]), float(bm[i]), None if dense is None or not has_d[i] else float(dense[i]), ov))
     # de-duplicate near-identical overlapping chunks from the same page
     out: list[Hit] = []
     for h in hits:
