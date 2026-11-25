@@ -11,7 +11,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from core import engine, vectorstore
+from core import engine
 from core.llm import LLMConfig, ollama_chat_models
 from core.pdf_utils import load_pdf, render_page_png
 from core.ui import CSS, landing_bottom, landing_top
@@ -365,11 +365,6 @@ def model_settings():
             value=cfg.rerank,
             key="set_rerank",
             help="Fetch 20 candidate passages, then let a small cross-encoder pick the 6 most relevant.",
-        )
-        st.caption(
-            f"Vector store: **ChromaDB** (`{vectorstore.location()}`) — embeddings are saved and reused."
-            if vectorstore.available()
-            else "Vector store: **in-memory** (ChromaDB not available) — embeddings are rebuilt each session."
         )
 
         if st.button("Save settings", key="set_save", type="primary"):
