@@ -26,6 +26,7 @@ class Hit:
     lexical: float
     dense: float | None
     overlap: int  # how many topical query terms appear in the chunk
+    rerank: float | None = None  # cross-encoder relevance score, when reranked
 
 
 @dataclass

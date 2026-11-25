@@ -22,3 +22,7 @@ def store(tmp_path):
     vectorstore.reset_client_for_tests(str(tmp_path / "chroma"))
     yield vectorstore
     vectorstore.reset_client_for_tests(None)
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "slow: downloads/runs the real FlashRank model")
