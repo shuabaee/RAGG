@@ -1,29 +1,29 @@
 """RAGG for Research — Streamlit app.
-
+ 
 Run locally:  streamlit run app.py
 """
 from __future__ import annotations
-
+ 
 import html
 import os
 from dataclasses import asdict
 from pathlib import Path
-
+ 
 import streamlit as st
-
+ 
 from core import engine
 from core.llm import LLMConfig, ollama_chat_models
 from core.pdf_utils import load_pdf, render_page_png
 from core.ui import CSS, landing_bottom, landing_top
-
+ 
 APP_DIR = Path(__file__).parent
 SAMPLE_DIR = APP_DIR / "sample_papers"
 MAX_MB = 25
-
+ 
 st.set_page_config(page_title="Ragg for Research", page_icon="📚", layout="wide", initial_sidebar_state="collapsed")
 st.markdown(CSS, unsafe_allow_html=True)
-
-
+ 
+ 
 # ----------------------------------------------------------------------------- state
 def _secret(name: str, default: str = "") -> str:
     try:
@@ -33,8 +33,8 @@ def _secret(name: str, default: str = "") -> str:
     except Exception:
         pass
     return os.environ.get(name, default)
-
-
+ 
+ 
 def init_state():
     s = st.session_state
     s.setdefault("papers", {})  # pid -> Paper
@@ -50,28 +50,32 @@ def init_state():
     if "llm" not in s:
         oai = _secret("OPENAI_API_KEY")
         prov_env = _secret("RAGG_PROVIDER").lower()
-        if prov_env in ("ollama", "openai", "none"):
+        if prov_env in ("ollama", "openai", "aiki", "none"):
             provider = prov_env
         elif oai:
             provider = "openai"
         else:
             provider = "ollama"  # default: local Ollama; without it running, RAGG falls back to extractive mode
-        key = oai if provider == "openai" else ""
+        key = oai if provider == "openai" else (_secret("AIKI_API_KEY") if provider == "aiki" else "")
         s.llm = LLMConfig(
             provider=provider,
             api_key=key,
             model=_secret("RAGG_MODEL"),
-            base_url=_secret("OLLAMA_HOST") if provider in ("ollama", "llama") else _secret("OPENAI_BASE_URL"),
+            base_url=(
+                _secret("OLLAMA_HOST") if provider in ("ollama", "llama")
+                else "" if provider == "aiki"  # Aiki's endpoint is fixed in core/llm.py
+                else _secret("OPENAI_BASE_URL")
+            ),
             embed_model=_secret("RAGG_EMBED_MODEL"),
             rerank=_secret("RAGG_RERANK", "1").strip().lower() not in ("0", "false", "off", "no"),
             think=_secret("RAGG_THINK", "1").strip().lower() not in ("0", "false", "off", "no"),
         )
-
-
+ 
+ 
 init_state()
 S = st.session_state
-
-
+ 
+ 
 # ----------------------------------------------------------------------------- paper ops
 def add_pdf(name: str, data: bytes, notebook: str) -> tuple[bool, str]:
     if len(data) > MAX_MB * 1024 * 1024:
@@ -89,8 +93,8 @@ def add_pdf(name: str, data: bytes, notebook: str) -> tuple[bool, str]:
         return False, f"{name}: {paper.message}"
     n = len(S.indexes[paper.paper_id].chunks)
     return True, f"Added {name} — {paper.n_pages} pages, {n} passages indexed."
-
-
+ 
+ 
 def load_demo():
     nb = "Demo"
     if nb not in S.notebooks:
@@ -98,19 +102,19 @@ def load_demo():
     for f in sorted(SAMPLE_DIR.glob("*.pdf")):
         add_pdf(f.name, f.read_bytes(), nb)
     S.active_nb = nb
-
-
+ 
+ 
 if S.get("_demo_done") is None and st.query_params.get("demo") == "1":
     load_demo()
     S._demo_done = True
     st.query_params.clear()
-
-
+ 
+ 
 def papers_in_nb(nb: str) -> list:
     ps = list(S.papers.values())
     return ps if nb == "All papers" else [p for p in ps if p.notebook == nb]
-
-
+ 
+ 
 def scope_papers() -> tuple[list, str]:
     nb_papers = [p for p in papers_in_nb(S.active_nb) if p.status == "ready"]
     chosen = [p for p in nb_papers if p.paper_id in S.selected]
@@ -119,8 +123,8 @@ def scope_papers() -> tuple[list, str]:
     if nb_papers:
         return nb_papers, f"No paper selected — searching all <b>{len(nb_papers)}</b> in <b>{html.escape(S.active_nb)}</b>"
     return [], "No papers in scope yet — add a PDF to start"
-
-
+ 
+ 
 def uploader(prefix: str):
     files = st.file_uploader(
         "Research PDFs (text-based)", type=["pdf"], accept_multiple_files=True, key=f"{prefix}_{S.uploader_n}"
@@ -136,13 +140,13 @@ def uploader(prefix: str):
         S.upload_report = msgs
         S.uploader_n += 1
         st.rerun()
-
-
+ 
+ 
 # ----------------------------------------------------------------------------- left: library
 def render_library():
     with st.container(key="library"):
         st.markdown("<h3>Ragg for Research</h3><p class='lib-sub'>Select a knowledge source</p>", unsafe_allow_html=True)
-
+ 
         # notebooks
         st.markdown("<div class='lib-label'>Notebooks</div>", unsafe_allow_html=True)
         with st.popover("New notebook", icon=":material/add:"):
@@ -168,7 +172,7 @@ def render_library():
                 ):
                     S.active_nb = nb
                     st.rerun()
-
+ 
         # papers
         st.markdown("<div class='lib-label'>Research Papers</div>", unsafe_allow_html=True)
         with st.popover("New paper", icon=":material/add:"):
@@ -177,7 +181,7 @@ def render_library():
             for m in S.upload_report:
                 st.caption(m)
             S.upload_report = None
-
+ 
         st.text_input("Search papers", key="paper_search", placeholder="Search by title or author…",
                       label_visibility="collapsed", icon=":material/search:")
         query = S.get("paper_search", "") or ""
@@ -225,8 +229,8 @@ def render_library():
                                 if p.paper_id in S.selected:
                                     S.selected.remove(p.paper_id)
                                 st.rerun()
-
-
+ 
+ 
 # ----------------------------------------------------------------------------- right: chat
 BADGE = {
     "verified": "<span class='b-ok'>✓ Verified verbatim on this page</span>",
@@ -236,16 +240,16 @@ BADGE = {
 SEC = engine._SEC_NAMES
 AVATAR_USER = ":material/person:"
 AVATAR_BOT = ":material/auto_stories:"
-
-
+ 
+ 
 def _page_png(pid: str, page: int, quote: str):
     key = (pid, page, quote[:80])
     if key not in S.page_cache:
         p = S.papers.get(pid)
         S.page_cache[key] = render_page_png(p.data, page, quote) if p else None
     return S.page_cache[key]
-
-
+ 
+ 
 def render_evidence(items: list[dict], mi: int, label: str, kind: str):
     if not items:
         return
@@ -264,8 +268,8 @@ def render_evidence(items: list[dict], mi: int, label: str, kind: str):
                         st.image(png, caption=f"{e['filename']} — page {e['page']} (excerpt highlighted where found)")
                     else:
                         st.caption("Page preview unavailable for this file.")
-
-
+ 
+ 
 def render_message(mi: int, m: dict):
     avatar = AVATAR_USER if m["role"] == "user" else AVATAR_BOT
     with st.chat_message(m["role"], avatar=avatar):
@@ -282,8 +286,8 @@ def render_message(mi: int, m: dict):
         render_evidence(ev, mi, f"Evidence · {len(ev)} excerpt(s) from your PDFs", "ev")
         ps = m.get("passages") or []
         render_evidence(ps, mi, "Top 3 retrieved passages", "ps")
-
-
+ 
+ 
 def run_question(q: str):
     q = q.strip()[:2000]
     if not q:
@@ -312,8 +316,8 @@ def run_question(q: str):
             "reasoning": rep.reasoning,
         }
     )
-
-
+ 
+ 
 def model_settings():
     cfg: LLMConfig = S.llm
     with st.popover("Model settings", icon=":material/tune:"):
@@ -321,6 +325,7 @@ def model_settings():
         opts = {
             "Ollama (local)": "ollama",
             "ChatGPT (OpenAI API key)": "openai",
+            "Aiki": "aiki",
             "None — extractive mode": "none",
         }
         cur = next((k for k, v in opts.items() if v in (cfg.provider, "ollama" if cfg.provider == "llama" else "")), "Ollama (local)")
@@ -348,9 +353,12 @@ def model_settings():
             model = st.text_input("ChatGPT model (blank = default)", value=cfg.model if prov == cfg.provider else "", key="set_model",
                                   placeholder="gpt-4o-mini")
             base = cfg.base_url if prov == cfg.provider else ""  # OPENAI_BASE_URL secret still honoured
+        elif prov == "aiki":  # fixed endpoint and model: nothing to enter
+            key = cfg.api_key if prov == cfg.provider else _secret("AIKI_API_KEY")  # optional, from secrets only
+            model, base = "", ""
         else:
             key, model, base = "", "", ""
-
+ 
         think = cfg.think  # only Ollama exposes a model's reasoning, so only Ollama gets the switch
         if prov == "ollama":
             think = st.toggle(
@@ -366,14 +374,14 @@ def model_settings():
             key="set_rerank",
             help="Fetch 20 candidate passages, then let a small cross-encoder pick the 6 most relevant.",
         )
-
+ 
         if st.button("Save settings", key="set_save", type="primary"):
             S.llm = LLMConfig(provider=prov, api_key=key.strip(), model=model.strip(), base_url=base.strip(), embed_model=cfg.embed_model, rerank=rerank, think=think)
             for ix in S.indexes.values():  # embeddings must be rebuilt for a new provider
                 ix.emb, ix.emb_key, ix.in_store = None, "", False
             st.rerun()
-
-
+ 
+ 
 def render_chat():
     with st.container(key="chat_panel"):
         with st.container(key="chat_head"):
@@ -387,7 +395,7 @@ def render_chat():
                 if st.button("Clear chat", key="clear_chat", disabled=not S.messages, icon=":material/delete_sweep:"):
                     S.messages, S.focus_ids = [], []
                     st.rerun()
-
+ 
         papers, scope_txt = scope_papers()
         box = st.container(height=540, border=False, key="chat_box")
         with box:
@@ -415,7 +423,7 @@ def render_chat():
                     with st.spinner("Ragg is reading your sources…"):
                         run_question(_q)
                 st.rerun()
-
+ 
         st.markdown(f"<div class='scope-chip'>{scope_txt}</div>", unsafe_allow_html=True)
         with st.container(key="ask_bar"):
             with st.form("ask_form", clear_on_submit=True, border=False):
@@ -427,8 +435,8 @@ def render_chat():
         if sent and q and q.strip():
             S.pending_q = q
             st.rerun()
-
-
+ 
+ 
 # ----------------------------------------------------------------------------- page
 st.markdown(landing_top(), unsafe_allow_html=True)
 with st.container(key="model_wrap"):
